@@ -1,0 +1,64 @@
+name: Auto-fix Format
+
+on:
+  push:
+    branches: [ main, dev ]
+    paths:
+    - '**.jl'
+    - '.JuliaFormatter.toml'
+  pull_request:
+    branches: [ main, dev ]
+    paths:
+    - '**.jl'
+    - '.JuliaFormatter.toml'
+
+# Add permissions for the workflow
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        # Fetch full history for better git operations
+        fetch-depth: 0
+        
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.11'
+        
+    - name: Install JuliaFormatter
+      run: julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
+      
+    - name: Format code
+      run: julia -e 'using JuliaFormatter; format(".", verbose=true)'
+      
+    - name: Check for changes
+      id: verify-changed-files
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+          echo "Files that would be changed:"
+          git status --porcelain
+        else
+          echo "changed=false" >> $GITHUB_OUTPUT
+          echo "No formatting changes needed"
+        fi
+        
+    - name: Commit formatted files
+      if: steps.verify-changed-files.outputs.changed == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add -A
+        git commit -m "Auto-format Julia code with JuliaFormatter [skip ci]"
+        git push
+        

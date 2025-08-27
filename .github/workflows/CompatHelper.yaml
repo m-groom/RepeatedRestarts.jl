@@ -1,0 +1,30 @@
+name: CompatHelper
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # Run weekly on Mondays at midnight UTC
+  workflow_dispatch:  # Allow manual triggering
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  CompatHelper:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v1
+        with:
+          version: '1.9'
+          
+      - name: Install CompatHelper
+        run: julia -e 'using Pkg; Pkg.add("CompatHelper")'
+        
+      - name: Run CompatHelper
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: julia -e 'using CompatHelper; CompatHelper.main()'
