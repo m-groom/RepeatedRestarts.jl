@@ -6,9 +6,6 @@
 get_rng(random_state::Integer) = Xoshiro(random_state)
 get_rng(random_state::AbstractRNG) = random_state
 
-# TODO: see if this is in MLJBase
-_process_accel_settings(x) = x
-
 # Normalize rng_field into a Vector{Symbol}
 to_path(s::Symbol) = Symbol[s]
 to_path(s::AbstractString) = Symbol.(split(s, "."))

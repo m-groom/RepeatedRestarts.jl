@@ -15,7 +15,7 @@ export RepeatedModel
 # Common package metadata
 const PKG_METADATA = (
     package_name="RepeatedRestarts",
-    package_uuid="c5ef7d8a-4f32-44df-9bf1-d1a5ca83e999", # TODO: change this
+    package_uuid="c5ef7d8a-4f32-44df-9bf1-d1a5ca83e999",
     package_url="https://github.com/m-groom/RepeatedRestarts.jl",
     package_license="MIT",
 )

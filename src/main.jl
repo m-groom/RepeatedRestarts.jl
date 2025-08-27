@@ -7,7 +7,7 @@ const MMI = MLJModelInterface
 # Define wrapper structs for each MLJ model type
 mutable struct DeterministicRepeatedModel{M} <: MMI.Deterministic
     model::M
-    rng_field::Union{Symbol,Vector{Symbol},String}
+    rng_field::Union{Symbol,Vector{Symbol},String}  # TODO: allow for Expr, remove Vector{Symbol}
     n_repeats::Int
     resampling
     measure
@@ -28,7 +28,7 @@ end
 
 mutable struct ProbabilisticRepeatedModel{M} <: MMI.Probabilistic
     model::M
-    rng_field::Union{Symbol,Vector{Symbol},String}
+    rng_field::Union{Symbol,Vector{Symbol},String}  # TODO: allow for Expr, remove Vector{Symbol}
     n_repeats::Int
     resampling
     measure
@@ -49,7 +49,7 @@ end
 
 mutable struct UnsupervisedRepeatedModel{M} <: MMI.Unsupervised
     model::M
-    rng_field::Union{Symbol,Vector{Symbol},String}
+    rng_field::Union{Symbol,Vector{Symbol},String}  # TODO: allow for Expr, remove Vector{Symbol}
     n_repeats::Int
     resampling
     measure
@@ -119,7 +119,7 @@ function RepeatedModel(
     acceleration_resampling=CPU1(),
     check_measure=true,
     cache=true,
-    compact_history=true, # TODO: currently unused
+    compact_history=true,
     random_state=Random.default_rng(),
 )
     length(args) < 2 || throw(ArgumentError("Too many positional arguments"))
@@ -248,7 +248,7 @@ function MMI.clean!(wrapper::RepeatedModel)
         wrapper.acceleration = CPUProcesses()
         wrapper.acceleration_resampling = CPUThreads()
     end
-    wrapper.acceleration = _process_accel_settings(wrapper.acceleration)
+    wrapper.acceleration = MLJBase._process_accel_settings(wrapper.acceleration)
 
     return message
 end
@@ -339,8 +339,7 @@ function MMI.fit(wrapper::RepeatedModel, verbosity::Int, args...)
         m = deepcopy(wrapper.model)
         set_rng!(m, path, s)
         mach = machine(m, args...)
-        entry = evaluate_one!(mach, wrapper; verbosity=verbosity)
-        history[i] = entry
+        history[i] = evaluate_seed!(mach, wrapper; verbosity=verbosity)
         models[i] = m
         inner_fitresults[i] = mach.fitresult
         if wrapper.cache
@@ -440,13 +439,27 @@ end
 # ==============================================================================
 
 function MMI.fitted_params(wrapper::RepeatedModel, fitresult::RepeatedFitResult)
-    return MMI.fitted_params(wrapper.model, fitresult.inner_fitresult)
+    if wrapper.return_mode == :best
+        return MMI.fitted_params(wrapper.model, fitresult.inner_fitresult[1])
+    else
+        return [
+            MMI.fitted_params(wrapper.model, fitresult.inner_fitresult[i]) for
+            i in eachindex(fitresult.inner_fitresult)
+        ]
+    end
 end
 
 function MMI.feature_importances(
     wrapper::RepeatedModel, fitresult::RepeatedFitResult, report
 )
-    return MMI.feature_importances(wrapper.model, fitresult.inner_fitresult, report)
+    if wrapper.return_mode == :best
+        return MMI.feature_importances(wrapper.model, fitresult.inner_fitresult[1], report)
+    else
+        return [
+            MMI.feature_importances(wrapper.model, fitresult.inner_fitresult[i], report) for
+            i in eachindex(fitresult.inner_fitresult)
+        ]
+    end
 end
 
 # ==============================================================================

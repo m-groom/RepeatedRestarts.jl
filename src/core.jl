@@ -1,5 +1,5 @@
 # build one history entry by evaluating `mach` (resampling or in-sample)
-function evaluate_one!(mach, wrapper::RepeatedModel; verbosity::Int=0)
+function evaluate_seed!(mach, wrapper::RepeatedModel; verbosity::Int=0)
     E = evaluate!(
         mach;
         resampling=wrapper.resampling,
@@ -9,6 +9,7 @@ function evaluate_one!(mach, wrapper::RepeatedModel; verbosity::Int=0)
         class_weights=wrapper.class_weights,
         check_measure=wrapper.check_measure,
         acceleration=wrapper.acceleration_resampling,
+        compact=wrapper.compact_history,
         verbosity=verbosity,
     )
     entry = (
