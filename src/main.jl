@@ -7,7 +7,7 @@ const MMI = MLJModelInterface
 # Define wrapper structs for each MLJ model type
 mutable struct DeterministicRepeatedModel{M} <: MMI.Deterministic
     model::M
-    rng_field::Union{Symbol,Vector{Symbol}, String}
+    rng_field::Union{Symbol,Vector{Symbol},String}
     n_repeats::Int
     resampling
     measure
@@ -28,7 +28,7 @@ end
 
 mutable struct ProbabilisticRepeatedModel{M} <: MMI.Probabilistic
     model::M
-    rng_field::Union{Symbol,Vector{Symbol}, String}
+    rng_field::Union{Symbol,Vector{Symbol},String}
     n_repeats::Int
     resampling
     measure
@@ -49,7 +49,7 @@ end
 
 mutable struct UnsupervisedRepeatedModel{M} <: MMI.Unsupervised
     model::M
-    rng_field::Union{Symbol,Vector{Symbol}, String}
+    rng_field::Union{Symbol,Vector{Symbol},String}
     n_repeats::Int
     resampling
     measure
@@ -72,10 +72,31 @@ end
 const RepeatedModel{M} = Union{
     DeterministicRepeatedModel{M},
     ProbabilisticRepeatedModel{M},
-    UnsupervisedRepeatedModel{M}
+    UnsupervisedRepeatedModel{M},
 } where {M}
 Base.parentmodule(::Type{<:RepeatedModel}) = RepeatedRestarts
-Base.fieldnames(::Type{<:RepeatedModel}) = (:model, :rng_field, :n_repeats, :resampling, :measure, :weights, :class_weights, :operation, :selection_heuristic, :return_mode, :aggregation, :refit, :acceleration, :acceleration_resampling, :check_measure, :cache, :compact_history, :random_state)
+function Base.fieldnames(::Type{<:RepeatedModel})
+    (
+        :model,
+        :rng_field,
+        :n_repeats,
+        :resampling,
+        :measure,
+        :weights,
+        :class_weights,
+        :operation,
+        :selection_heuristic,
+        :return_mode,
+        :aggregation,
+        :refit,
+        :acceleration,
+        :acceleration_resampling,
+        :check_measure,
+        :cache,
+        :compact_history,
+        :random_state,
+    )
+end
 
 # External keyword constructor
 function RepeatedModel(
@@ -101,7 +122,6 @@ function RepeatedModel(
     compact_history=true, # TODO: currently unused
     random_state=Random.default_rng(),
 )
-
     length(args) < 2 || throw(ArgumentError("Too many positional arguments"))
 
     if length(args) === 1
@@ -158,7 +178,6 @@ function RepeatedModel(
     isempty(message) || @warn message
 
     return wrapper
-
 end
 
 # Clean method for parameter validation
@@ -167,7 +186,9 @@ function MMI.clean!(wrapper::RepeatedModel)
     # Check that rng_field is a valid field of the model
     path = to_path(wrapper.rng_field)
     if !has_nested(wrapper.model, path)
-        error("rng_field=$(wrapper.rng_field) does not resolve to a field on $(typeof(wrapper.model)).")
+        error(
+            "rng_field=$(wrapper.rng_field) does not resolve to a field on $(typeof(wrapper.model)).",
+        )
     end
     # Check that n_repeats is positive
     if wrapper.n_repeats <= 0
@@ -193,31 +214,36 @@ function MMI.clean!(wrapper::RepeatedModel)
     if wrapper.measure === nothing
         wrapper.measure = default_measure(wrapper.model)
         if wrapper.measure === nothing
-            error("Unable to deduce a default measure for specified model. "*
-                  "You must specify `measure=...`. ")
+            error(
+                "Unable to deduce a default measure for specified model. " *
+                "You must specify `measure=...`. ",
+            )
         else
-            message *= "No measure specified. "*
-            "Setting measure=$(wrapper.measure). "
+            message *= "No measure specified. " * "Setting measure=$(wrapper.measure). "
         end
     end
     # Check acceleration
-    if (wrapper.acceleration isa CPUProcesses &&
-        wrapper.acceleration_resampling isa CPUProcesses)
+    if (
+        wrapper.acceleration isa CPUProcesses &&
+        wrapper.acceleration_resampling isa CPUProcesses
+    )
         message *=
-        "The combination acceleration=$(wrapper.acceleration) and"*
-        " acceleration_resampling=$(wrapper.acceleration_resampling) is"*
-        "  not generally optimal. You may want to consider setting"*
-        " `acceleration = CPUProcesses()` and"*
-        " `acceleration_resampling = CPUThreads()`."
+            "The combination acceleration=$(wrapper.acceleration) and" *
+            " acceleration_resampling=$(wrapper.acceleration_resampling) is" *
+            "  not generally optimal. You may want to consider setting" *
+            " `acceleration = CPUProcesses()` and" *
+            " `acceleration_resampling = CPUThreads()`."
     end
-    if (wrapper.acceleration isa CPUThreads &&
-        wrapper.acceleration_resampling isa CPUProcesses)
+    if (
+        wrapper.acceleration isa CPUThreads &&
+        wrapper.acceleration_resampling isa CPUProcesses
+    )
         message *=
-        "The combination acceleration=$(wrapper.acceleration) and"*
-        " acceleration_resampling=$(wrapper.acceleration_resampling) isn't"*
-        " supported. \n Resetting to"*
-        " `acceleration = CPUProcesses()` and"*
-        " `acceleration_resampling = CPUThreads()`."
+            "The combination acceleration=$(wrapper.acceleration) and" *
+            " acceleration_resampling=$(wrapper.acceleration_resampling) isn't" *
+            " supported. \n Resetting to" *
+            " `acceleration = CPUProcesses()` and" *
+            " `acceleration_resampling = CPUThreads()`."
 
         wrapper.acceleration = CPUProcesses()
         wrapper.acceleration_resampling = CPUThreads()
@@ -240,13 +266,19 @@ function MMI.reports_feature_importances(::Type{<:RepeatedModel{M}}) where {M}
 end
 MMI.is_pure_julia(::Type{<:RepeatedModel{M}}) where {M} = MMI.is_pure_julia(M)
 MMI.reporting_operations(::Type{<:RepeatedModel{M}}) where {M} = MMI.reporting_operations(M)
-MMI.supports_weights(::Type{<:RepeatedModel{M}}) where M = MMI.supports_weights(M)
-MMI.supports_class_weights(::Type{<:RepeatedModel{M}}) where M = MMI.supports_class_weights(M)
+MMI.supports_weights(::Type{<:RepeatedModel{M}}) where {M} = MMI.supports_weights(M)
+function MMI.supports_class_weights(::Type{<:RepeatedModel{M}}) where {M}
+    MMI.supports_class_weights(M)
+end
 
 # Input/output scitypes - inherit from wrapped model
 MMI.input_scitype(::Type{<:RepeatedModel{M}}) where {M} = MMI.input_scitype(M)
-MMI.target_scitype(::Type{<:DeterministicRepeatedModel{M}}) where {M} = MMI.target_scitype(M)
-MMI.target_scitype(::Type{<:ProbabilisticRepeatedModel{M}}) where {M} = MMI.target_scitype(M)
+function MMI.target_scitype(::Type{<:DeterministicRepeatedModel{M}}) where {M}
+    MMI.target_scitype(M)
+end
+function MMI.target_scitype(::Type{<:ProbabilisticRepeatedModel{M}}) where {M}
+    MMI.target_scitype(M)
+end
 
 # Support for MLJ iteration API
 MMI.iteration_parameter(::Type{<:RepeatedModel{M}}) where {M} = :n_repeats
@@ -266,7 +298,6 @@ function MMI.training_losses(wrapper::RepeatedModel, _report)
     return ret
 end
 
-
 # ==============================================================================
 # Fit Result Structure
 # ==============================================================================
@@ -282,7 +313,6 @@ struct RepeatedFitResult
         new(inner_fitresult, seeds, best_index)
     end
 end
-
 
 # ==============================================================================
 # Fit Methods
@@ -329,7 +359,7 @@ function MMI.fit(wrapper::RepeatedModel, verbosity::Int, args...)
             best_model = models[best_idx]
             set_rng!(best_model, path, seeds[best_idx])
             mach = machine(best_model, args...)
-            fit!(mach, verbosity=verbosity)
+            fit!(mach; verbosity=verbosity)
             inner_fitresults[best_idx] = mach.fitresult
             if wrapper.cache
                 inner_caches[best_idx] = mach.cache
@@ -345,7 +375,7 @@ function MMI.fit(wrapper::RepeatedModel, verbosity::Int, args...)
                 model = models[i]
                 set_rng!(model, path, seeds[i])
                 mach = machine(model, args...)
-                fit!(mach, verbosity=verbosity)
+                fit!(mach; verbosity=verbosity)
                 inner_fitresults[i] = mach.fitresult
                 if wrapper.cache
                     inner_caches[i] = mach.cache
@@ -360,36 +390,28 @@ function MMI.fit(wrapper::RepeatedModel, verbosity::Int, args...)
 
     # Generate report
     report = (
-        best_index = best_idx,
-        best_seed = seeds[best_idx],
-        best_model = models[best_idx],
-        best_history_entry = history[best_idx],
-        history = history,
-        seeds = seeds,
-        inner_report = r,
+        best_index=best_idx,
+        best_seed=seeds[best_idx],
+        best_model=models[best_idx],
+        best_history_entry=history[best_idx],
+        history=history,
+        seeds=seeds,
+        inner_report=r,
     )
 
     # Generate cache
     if wrapper.cache
-        cache = (
-            inner_cache = c,
-        )
+        cache = (inner_cache=c,)
     else
         cache = nothing
     end
 
     return fitresult, cache, report
-
-
 end
 
 # Common implementation for update - handles cases where n_repeats has been increased
 function MMI.update(
-    wrapper::RepeatedModel,
-    verbosity::Int,
-    fitresult::RepeatedFitResult,
-    old_cache,
-    args...
+    wrapper::RepeatedModel, verbosity::Int, fitresult::RepeatedFitResult, old_cache, args...
 )
     # TODO: implement
 end
@@ -398,12 +420,18 @@ end
 # Transform and Predict Methods
 # ==============================================================================
 
-function MMI.transform(wrapper::UnsupervisedRepeatedModel, fitresult::RepeatedFitResult, args...)
+function MMI.transform(
+    wrapper::UnsupervisedRepeatedModel, fitresult::RepeatedFitResult, args...
+)
     # TODO: implement
 end
 
 # Common implementation for predict - supervised models only
-function MMI.predict(wrapper::Union{DeterministicRepeatedModel,ProbabilisticRepeatedModel}, fitresult::RepeatedFitResult, args...)
+function MMI.predict(
+    wrapper::Union{DeterministicRepeatedModel,ProbabilisticRepeatedModel},
+    fitresult::RepeatedFitResult,
+    args...,
+)
     # TODO: implement
 end
 
@@ -415,7 +443,9 @@ function MMI.fitted_params(wrapper::RepeatedModel, fitresult::RepeatedFitResult)
     return MMI.fitted_params(wrapper.model, fitresult.inner_fitresult)
 end
 
-function MMI.feature_importances(wrapper::RepeatedModel, fitresult::RepeatedFitResult, report)
+function MMI.feature_importances(
+    wrapper::RepeatedModel, fitresult::RepeatedFitResult, report
+)
     return MMI.feature_importances(wrapper.model, fitresult.inner_fitresult, report)
 end
 

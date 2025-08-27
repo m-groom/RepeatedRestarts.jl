@@ -6,7 +6,6 @@
 get_rng(random_state::Integer) = Xoshiro(random_state)
 get_rng(random_state::AbstractRNG) = random_state
 
-
 # TODO: see if this is in MLJBase
 _process_accel_settings(x) = x
 
@@ -30,7 +29,7 @@ end
 # Get the object that contains the last field in path (and its type)
 function get_parent_and_last(obj, path::Vector{Symbol})
     parent = obj
-    for i in 1:length(path)-1
+    for i in 1:(length(path) - 1)
         parent = getfield(parent, path[i])
     end
     return parent, path[end]
@@ -47,7 +46,10 @@ function set_rng!(model, rng_path::Vector{Symbol}, seed::UInt64)
             # Choose a concrete Integer subtype IT that is allowed by T
             intpart = typeintersect(T, Integer)
             IT = if intpart isa Union
-                members = filter(t -> t <: Integer && isconcretetype(t) && isbitstype(t), Base.uniontypes(intpart))
+                members = filter(
+                    t -> t <: Integer && isconcretetype(t) && isbitstype(t),
+                    Base.uniontypes(intpart),
+                )
                 if any(t -> t === Int, members)
                     Int
                 elseif !isempty(members)
@@ -63,7 +65,17 @@ function set_rng!(model, rng_path::Vector{Symbol}, seed::UInt64)
             end
             # Map seed into the width of IT
             nb = sizeof(IT)
-            u = nb == 16 ? UInt128(seed) : nb == 8 ? seed : nb == 4 ? UInt32(seed) : nb == 2 ? UInt16(seed) : UInt8(seed)
+            u = if nb == 16
+                UInt128(seed)
+            elseif nb == 8
+                seed
+            elseif nb == 4
+                UInt32(seed)
+            elseif nb == 2
+                UInt16(seed)
+            else
+                UInt8(seed)
+            end
             val = IT <: Unsigned ? convert(IT, u) : reinterpret(IT, u)
             setfield!(parent, last, val)
         else
