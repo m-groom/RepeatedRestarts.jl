@@ -12,7 +12,15 @@ to_path(s::AbstractString) = Symbol.(split(s, "."))
 to_path(v::AbstractVector) = Symbol.(v)
 
 # Normalise field node (Symbol or QuoteNode) to Symbol
-field_symbol(x) = x isa Symbol ? x : x isa Base.QuoteNode ? x.value :: Symbol : error("Unsupported field node in rng_field expression: $(x)")
+function field_symbol(x)
+    if x isa Symbol
+        x
+    elseif x isa Base.QuoteNode
+        x.value::Symbol
+    else
+        error("Unsupported field node in rng_field expression: $(x)")
+    end
+end
 
 # Support Expr input, e.g. :(a.b.c) or :(rng)
 function to_path(e::Expr)
