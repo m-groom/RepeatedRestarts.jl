@@ -7,7 +7,7 @@ const MMI = MLJModelInterface
 # Define wrapper structs for each MLJ model type
 mutable struct DeterministicRepeatedModel{M} <: MMI.Deterministic
     model::M
-    rng_field::Union{Symbol,Vector{Symbol},String}  # TODO: allow for Expr, remove Vector{Symbol}
+    rng_field::Union{Symbol,Expr,String}
     n_repeats::Int
     resampling
     measure
@@ -28,7 +28,7 @@ end
 
 mutable struct ProbabilisticRepeatedModel{M} <: MMI.Probabilistic
     model::M
-    rng_field::Union{Symbol,Vector{Symbol},String}  # TODO: allow for Expr, remove Vector{Symbol}
+    rng_field::Union{Symbol,Expr,String}
     n_repeats::Int
     resampling
     measure
@@ -49,7 +49,7 @@ end
 
 mutable struct UnsupervisedRepeatedModel{M} <: MMI.Unsupervised
     model::M
-    rng_field::Union{Symbol,Vector{Symbol},String}  # TODO: allow for Expr, remove Vector{Symbol}
+    rng_field::Union{Symbol,Expr,String}
     n_repeats::Int
     resampling
     measure

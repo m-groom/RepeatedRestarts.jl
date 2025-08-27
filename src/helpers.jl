@@ -11,6 +11,31 @@ to_path(s::Symbol) = Symbol[s]
 to_path(s::AbstractString) = Symbol.(split(s, "."))
 to_path(v::AbstractVector) = Symbol.(v)
 
+# Normalise field node (Symbol or QuoteNode) to Symbol
+field_symbol(x) = x isa Symbol ? x : x isa Base.QuoteNode ? x.value :: Symbol : error("Unsupported field node in rng_field expression: $(x)")
+
+# Support Expr input, e.g. :(a.b.c) or :(rng)
+function to_path(e::Expr)
+    # Allow quoted symbols: :(rng)
+    if e.head == :quote && length(e.args) == 1
+        return Symbol[field_symbol(e.args[1])]
+    end
+
+    # Handle dotted field access: :(a.b.c) represented as nested Expr(:., ...)
+    if e.head == :.
+        fields = Symbol[]
+        current = e
+        while current isa Expr && current.head == :.
+            pushfirst!(fields, field_symbol(current.args[2]))
+            current = current.args[1]
+        end
+        pushfirst!(fields, field_symbol(current))
+        return fields
+    end
+
+    error("Unsupported rng_field expression: $(e)")
+end
+
 # Does a nested field path exist?
 function has_nested(obj, path::Vector{Symbol})
     T = typeof(obj)
