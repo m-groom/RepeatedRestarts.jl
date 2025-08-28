@@ -56,7 +56,7 @@ end
 
     @testset "deterministic model construction" begin
         base_model = DecisionTreeClassifier(rng=42)
-        repeated = RepeatedModel(base_model, n_repeats=3)
+        repeated = RepeatedModel(base_model, n_repeats=3, measure=Accuracy(), refit=false)
 
         @test repeated isa RepeatedRestarts.ProbabilisticRepeatedModel
         @test repeated.model === base_model
@@ -72,7 +72,8 @@ end
         repeated = RepeatedModel(
             model=base_model,
             n_repeats=5,
-            measure=LogLoss()
+            measure=LogLoss(),
+            refit=false
         )
 
         @test repeated isa Union{RepeatedRestarts.DeterministicRepeatedModel, RepeatedRestarts.ProbabilisticRepeatedModel}
@@ -87,7 +88,7 @@ end
         y_reg = 2 * X_reg.x1 + 3 * X_reg.x2 + 0.1 * randn(100)
 
         base_model = DecisionTreeRegressor(rng=42)
-        repeated = RepeatedModel(base_model, n_repeats=2)
+        repeated = RepeatedModel(base_model, n_repeats=2, measure=LPLoss(), refit=false)
 
         @test repeated isa RepeatedRestarts.DeterministicRepeatedModel
         @test repeated.model === base_model
@@ -115,7 +116,8 @@ end
         @test_throws ArgumentError RepeatedModel(
             DecisionTreeClassifier(),
             DecisionTreeRegressor(),
-            n_repeats=3
+            n_repeats=3,
+            refit=false
         )
 
         # No model provided
@@ -282,29 +284,29 @@ end
         base_model = DecisionTreeClassifier(rng=42)
 
         # Valid rng_field should work (may generate other warnings about default values)
-        repeated1 = RepeatedModel(base_model, rng_field=:rng, measure=Accuracy())
+        repeated1 = RepeatedModel(base_model, rng_field=:rng, measure=Accuracy(), refit=false)
         @test repeated1.rng_field == :rng
-        
-        repeated2 = RepeatedModel(base_model, rng_field="rng", measure=Accuracy())
+
+        repeated2 = RepeatedModel(base_model, rng_field="rng", measure=Accuracy(), refit=false)
         @test repeated2.rng_field == "rng"
 
         # Invalid rng_field should throw during construction
-        @test_throws ErrorException RepeatedModel(base_model, rng_field=:nonexistent)
-        @test_throws ErrorException RepeatedModel(base_model, rng_field="nonexistent")
+        @test_throws ErrorException RepeatedModel(base_model, rng_field=:nonexistent, refit=false)
+        @test_throws ErrorException RepeatedModel(base_model, rng_field="nonexistent", refit=false)
     end
 
     @testset "n_repeats validation" begin
         base_model = DecisionTreeClassifier(rng=42)
 
         # Valid n_repeats
-        repeated = RepeatedModel(base_model, n_repeats=5)
+        repeated = RepeatedModel(base_model, n_repeats=5, measure=Accuracy(), refit=false)
         @test repeated.n_repeats == 5
 
         # Invalid n_repeats should be corrected with warning
-        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(base_model, n_repeats=0)
+        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(base_model, n_repeats=0, measure=Accuracy(), refit=false)
         @test repeated.n_repeats == 10
 
-        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(base_model, n_repeats=-5)
+        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(base_model, n_repeats=-5, measure=Accuracy(), refit=false)
         @test repeated.n_repeats == 10
     end
 
@@ -313,12 +315,12 @@ end
 
         # Valid return_mode values
         for mode in [:best, :aggregate, :all]
-            repeated = RepeatedModel(base_model, return_mode=mode)
+            repeated = RepeatedModel(base_model, return_mode=mode, measure=Accuracy(), refit=false)
             @test repeated.return_mode == mode
         end
 
         # Invalid return_mode should be corrected with warning
-        repeated = @test_logs (:warn, r"return_mode.*Resetting to :best") RepeatedModel(base_model, return_mode=:invalid)
+        repeated = @test_logs (:warn, r"return_mode.*Resetting to :best") RepeatedModel(base_model, return_mode=:invalid, measure=Accuracy(), refit=false)
         @test repeated.return_mode == :best
     end
 
@@ -327,12 +329,12 @@ end
 
         # Valid aggregation values
         for agg in [:mean, :median, :mode, :vote]
-            repeated = RepeatedModel(base_model, aggregation=agg)
+            repeated = RepeatedModel(base_model, aggregation=agg, measure=Accuracy(), refit=false)
             @test repeated.aggregation == agg
         end
 
         # Invalid aggregation should be corrected with warning
-        repeated = @test_logs (:warn, r"aggregation.*Resetting to :mean") RepeatedModel(base_model, aggregation=:invalid)
+        repeated = @test_logs (:warn, r"aggregation.*Resetting to :mean") RepeatedModel(base_model, aggregation=:invalid, measure=Accuracy(), refit=false)
         @test repeated.aggregation == :mean
     end
 
@@ -343,12 +345,13 @@ end
         repeated = @test_logs (:warn, r"refit=true is not required.*Resetting to false") RepeatedModel(
             base_model,
             refit=true,
-            resampling=InSample()
+            resampling=InSample(),
+            measure=Accuracy()
         )
         @test repeated.refit == false
 
         # refit=false with InSample should be fine
-        repeated = RepeatedModel(base_model, refit=false, resampling=InSample())
+        repeated = RepeatedModel(base_model, refit=false, resampling=InSample(), measure=Accuracy())
         @test repeated.refit == false
 
         # refit=true with other resampling should be fine
@@ -360,7 +363,7 @@ end
         base_model = DecisionTreeClassifier(rng=42)
 
         # measure=nothing should be auto-detected with warning
-        repeated = @test_logs (:warn, r"No measure specified.*Setting measure=") RepeatedModel(base_model, measure=nothing)
+        repeated = @test_logs (:warn, r"No measure specified.*Setting measure=") RepeatedModel(base_model, measure=nothing, refit=false)
         @test repeated.measure !== nothing
 
     end
@@ -372,7 +375,9 @@ end
         repeated = @test_logs (:warn, r"not generally optimal") RepeatedModel(
             base_model,
             acceleration=CPUProcesses(),
-            acceleration_resampling=CPUProcesses()
+            acceleration_resampling=CPUProcesses(),
+            measure=Accuracy(),
+            refit=false
         )
 
         # CPUThreads + CPUProcesses should be corrected with warning
@@ -381,7 +386,8 @@ end
             base_model,
             acceleration=CPUThreads(),
             acceleration_resampling=CPUProcesses(),
-            measure=Accuracy()  # Specify measure to avoid extra warning
+            measure=Accuracy(),
+            refit=false
         )
         @test repeated.acceleration isa CPUProcesses
         @test repeated.acceleration_resampling isa CPUThreads
@@ -443,7 +449,8 @@ end
             base_model,
             n_repeats=2,
             resampling=InSample(),
-            measure=Accuracy()
+            measure=Accuracy(),
+            refit=false
         )
 
         result_insample = RepeatedRestarts.evaluate_seed!(mach, repeated_insample, repeated_insample.resampling; verbosity=0)
@@ -542,7 +549,7 @@ end
     @testset "trait inheritance from wrapped models" begin
         # Test with DecisionTreeClassifier
         dt_classifier = DecisionTreeClassifier(rng=42)
-        repeated_dt = RepeatedModel(dt_classifier)
+        repeated_dt = RepeatedModel(dt_classifier, measure=Accuracy(), refit=false)
 
         # Test that traits are inherited properly
         @test MLJModelInterface.input_scitype(RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}) ==
@@ -562,7 +569,7 @@ end
 
         # Test with DecisionTreeRegressor
         dt_regressor = DecisionTreeRegressor(rng=42)
-        repeated_reg = RepeatedModel(dt_regressor)
+        repeated_reg = RepeatedModel(dt_regressor, measure=LPLoss(), refit=false)
 
         @test MLJModelInterface.input_scitype(RepeatedRestarts.RepeatedModel{typeof(dt_regressor)}) ==
               MLJModelInterface.input_scitype(typeof(dt_regressor))
@@ -580,7 +587,7 @@ end
 
     @testset "iteration parameter trait" begin
         dt_classifier = DecisionTreeClassifier(rng=42)
-        repeated = RepeatedModel(dt_classifier)
+        repeated = RepeatedModel(dt_classifier, measure=Accuracy(), refit=false)
 
         @test MLJModelInterface.iteration_parameter(typeof(repeated)) == :n_repeats
         @test MLJModelInterface.supports_training_losses(typeof(repeated)) == true
@@ -610,7 +617,7 @@ end
 
     @testset "reporting operations trait" begin
         dt_classifier = DecisionTreeClassifier(rng=42)
-        repeated = RepeatedModel(dt_classifier)
+        repeated = RepeatedModel(dt_classifier, measure=Accuracy(), refit=false)
 
         # Should inherit reporting operations from wrapped model
         repeated_ops = MLJModelInterface.reporting_operations(typeof(repeated))

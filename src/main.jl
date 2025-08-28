@@ -241,7 +241,7 @@ function MMI.clean!(wrapper::RepeatedModel)
         message *=
             "The combination acceleration=$(wrapper.acceleration) and" *
             " acceleration_resampling=$(wrapper.acceleration_resampling) isn't" *
-            " supported. \n Resetting to" *
+            " supported. Resetting to" *
             " `acceleration = CPUProcesses()` and" *
             " `acceleration_resampling = CPUThreads()`."
 
