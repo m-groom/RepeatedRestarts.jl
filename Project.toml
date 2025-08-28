@@ -15,16 +15,20 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Aqua = "0.8"
 ComputationalResources = "0.3"
 MLJBase = "1.7"
+MLJDecisionTreeInterface = "0.4"
 MLJModelInterface = "1.11"
 MLJTuning = "0.8"
 Random = "1.9, 1.10, 1.11"
+StatisticalMeasures = "0.2"
 Statistics = "1.9, 1.10, 1.11"
 Test = "1.9, 1.10, 1.11"
 julia = "1.9"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+MLJDecisionTreeInterface = "c6f25543-311c-4c74-83dc-3ea6d1015661"
+StatisticalMeasures = "a19d573c-0a75-4610-95b3-7071388c7541"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "Test"]
+test = ["Aqua", "Test", "MLJDecisionTreeInterface", "StatisticalMeasures"]

@@ -66,7 +66,7 @@ function get_parent_and_last(obj, path::Vector{Symbol})
 end
 
 # Set RNG/seed appropriately depending on field type
-function set_rng!(model, rng_path::Vector{Symbol}, seed::UInt64)
+function set_rng!(model, rng_path::Vector{Symbol}, seed::Int)
     @assert !isempty(rng_path)
     parent, last = get_parent_and_last(model, rng_path)
     # Field type determines what to set:
@@ -93,19 +93,10 @@ function set_rng!(model, rng_path::Vector{Symbol}, seed::UInt64)
             else
                 intpart
             end
-            # Map seed into the width of IT
-            nb = sizeof(IT)
-            u = if nb == 16
-                UInt128(seed)
-            elseif nb == 8
-                seed
-            elseif nb == 4
-                UInt32(seed)
-            elseif nb == 2
-                UInt16(seed)
-            else
-                UInt8(seed)
-            end
+            # Map seed into the width of IT using its unsigned counterpart
+            seedu = unsigned(seed)
+            UT = unsigned(IT)  # unsigned type with the same width as IT
+            u = UT(seedu)      # wraps/truncates as needed to the correct width
             val = IT <: Unsigned ? convert(IT, u) : reinterpret(IT, u)
             setfield!(parent, last, val)
         else

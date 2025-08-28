@@ -304,7 +304,7 @@ end
 
 struct RepeatedFitResult
     inner_fitresult::Vector
-    seeds::Vector{UInt64}
+    seeds::Vector{Int}
     best_index::Int
     # Inner constructor
     function RepeatedFitResult(inner_fitresult, seeds, best_index)
@@ -323,7 +323,7 @@ include("core.jl")
 # Common implementation for fit
 function MMI.fit(wrapper::RepeatedModel, verbosity::Int, args...)
     rng = get_rng(wrapper.random_state)
-    seeds = rand(rng, UInt64, wrapper.n_repeats)
+    seeds = rand(rng, 1:typemax(Int32), wrapper.n_repeats)
     path = to_path(wrapper.rng_field)
 
     # evaluate n_repeats candidates
@@ -339,7 +339,10 @@ function MMI.fit(wrapper::RepeatedModel, verbosity::Int, args...)
         m = deepcopy(wrapper.model)
         set_rng!(m, path, s)
         mach = machine(m, args...)
-        history[i] = evaluate_seed!(mach, wrapper; verbosity=verbosity)
+        # Prepare a per-seed resampling object as a deep copy so its RNG state
+        # (if any) is reset to the initial state for every seed.
+        resampling = deepcopy(wrapper.resampling)
+        history[i] = evaluate_seed!(mach, wrapper, resampling; verbosity=verbosity)
         models[i] = m
         inner_fitresults[i] = mach.fitresult
         if wrapper.cache

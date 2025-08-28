@@ -1,8 +1,8 @@
 # build one history entry by evaluating `mach` (resampling or in-sample)
-function evaluate_seed!(mach, wrapper::RepeatedModel; verbosity::Int=0)
+function evaluate_seed!(mach, wrapper::RepeatedModel, resampling=InSample(); verbosity::Int=0)
     E = evaluate!(
         mach;
-        resampling=wrapper.resampling,
+        resampling=resampling,
         measure=wrapper.measure,
         operation=wrapper.operation, # if nothing, MLJ determines from measure (predict/predict_mode)
         weights=wrapper.weights,
