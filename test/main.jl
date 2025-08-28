@@ -33,7 +33,6 @@ using Random
     # TODO: call predict once it has been implemented
     # yhat_internal = MLJBase.predict(mach_rep, X)
 
-
     # Now refit a fresh machine using the same best seed and model, and compare predictions
     best_model = deepcopy(rep.best_model)
     mach_best = machine(best_model, X, y)
@@ -69,13 +68,12 @@ end
         # Use DecisionTreeClassifier which is probabilistic by default
         base_model = DecisionTreeClassifier(rng=42)
         # Force probabilistic behavior by wrapping appropriately
-        repeated = RepeatedModel(
-            model=base_model,
-            n_repeats=5,
-            measure=LogLoss()
-        )
+        repeated = RepeatedModel(model=base_model, n_repeats=5, measure=LogLoss())
 
-        @test repeated isa Union{RepeatedRestarts.DeterministicRepeatedModel, RepeatedRestarts.ProbabilisticRepeatedModel}
+        @test repeated isa Union{
+            RepeatedRestarts.DeterministicRepeatedModel,
+            RepeatedRestarts.ProbabilisticRepeatedModel,
+        }
         @test repeated.model === base_model
         @test repeated.n_repeats == 5
         @test repeated.measure === LogLoss()
@@ -102,7 +100,7 @@ end
             resampling=CV(nfolds=3),
             measure=Accuracy(),
             refit=false,
-            random_state=123
+            random_state=123,
         )
 
         @test repeated.n_repeats == 7
@@ -113,9 +111,7 @@ end
     @testset "constructor error cases" begin
         # Too many positional arguments
         @test_throws ArgumentError RepeatedModel(
-            DecisionTreeClassifier(),
-            DecisionTreeRegressor(),
-            n_repeats=3
+            DecisionTreeClassifier(), DecisionTreeRegressor(), n_repeats=3
         )
 
         # No model provided
@@ -135,7 +131,6 @@ end
 # ==============================================================================
 
 @testset "Helper Function Tests" begin
-
     @testset "get_rng function" begin
         # Test with integer seed
         rng1 = RepeatedRestarts.get_rng(42)
@@ -268,7 +263,9 @@ end
         @test test_model.rng isa Random.Xoshiro
 
         # Test error case - undefined field
-        @test_throws ErrorException RepeatedRestarts.set_rng!(model, Symbol[:nonexistent], 1)
+        @test_throws ErrorException RepeatedRestarts.set_rng!(
+            model, Symbol[:nonexistent], 1
+        )
     end
 end
 
@@ -277,14 +274,13 @@ end
 # ==============================================================================
 
 @testset "Parameter Validation Tests" begin
-
     @testset "rng_field validation" begin
         base_model = DecisionTreeClassifier(rng=42)
 
         # Valid rng_field should work (may generate other warnings about default values)
         repeated1 = RepeatedModel(base_model, rng_field=:rng, measure=Accuracy())
         @test repeated1.rng_field == :rng
-        
+
         repeated2 = RepeatedModel(base_model, rng_field="rng", measure=Accuracy())
         @test repeated2.rng_field == "rng"
 
@@ -301,10 +297,14 @@ end
         @test repeated.n_repeats == 5
 
         # Invalid n_repeats should be corrected with warning
-        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(base_model, n_repeats=0)
+        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(
+            base_model, n_repeats=0
+        )
         @test repeated.n_repeats == 10
 
-        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(base_model, n_repeats=-5)
+        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(
+            base_model, n_repeats=-5
+        )
         @test repeated.n_repeats == 10
     end
 
@@ -318,7 +318,9 @@ end
         end
 
         # Invalid return_mode should be corrected with warning
-        repeated = @test_logs (:warn, r"return_mode.*Resetting to :best") RepeatedModel(base_model, return_mode=:invalid)
+        repeated = @test_logs (:warn, r"return_mode.*Resetting to :best") RepeatedModel(
+            base_model, return_mode=:invalid
+        )
         @test repeated.return_mode == :best
     end
 
@@ -332,7 +334,9 @@ end
         end
 
         # Invalid aggregation should be corrected with warning
-        repeated = @test_logs (:warn, r"aggregation.*Resetting to :mean") RepeatedModel(base_model, aggregation=:invalid)
+        repeated = @test_logs (:warn, r"aggregation.*Resetting to :mean") RepeatedModel(
+            base_model, aggregation=:invalid
+        )
         @test repeated.aggregation == :mean
     end
 
@@ -341,9 +345,7 @@ end
 
         # refit=true with InSample should be corrected with warning
         repeated = @test_logs (:warn, r"refit=true is not required.*Resetting to false") RepeatedModel(
-            base_model,
-            refit=true,
-            resampling=InSample()
+            base_model, refit=true, resampling=InSample()
         )
         @test repeated.refit == false
 
@@ -360,9 +362,10 @@ end
         base_model = DecisionTreeClassifier(rng=42)
 
         # measure=nothing should be auto-detected with warning
-        repeated = @test_logs (:warn, r"No measure specified.*Setting measure=") RepeatedModel(base_model, measure=nothing)
+        repeated = @test_logs (:warn, r"No measure specified.*Setting measure=") RepeatedModel(
+            base_model, measure=nothing
+        )
         @test repeated.measure !== nothing
-
     end
 
     @testset "acceleration validation" begin
@@ -370,9 +373,7 @@ end
 
         # CPUProcesses + CPUProcesses should generate warning
         repeated = @test_logs (:warn, r"not generally optimal") RepeatedModel(
-            base_model,
-            acceleration=CPUProcesses(),
-            acceleration_resampling=CPUProcesses()
+            base_model, acceleration=CPUProcesses(), acceleration_resampling=CPUProcesses()
         )
 
         # CPUThreads + CPUProcesses should be corrected with warning
@@ -381,7 +382,7 @@ end
             base_model,
             acceleration=CPUThreads(),
             acceleration_resampling=CPUProcesses(),
-            measure=Accuracy()  # Specify measure to avoid extra warning
+            measure=Accuracy(),  # Specify measure to avoid extra warning
         )
         @test repeated.acceleration isa CPUProcesses
         @test repeated.acceleration_resampling isa CPUThreads
@@ -393,24 +394,22 @@ end
 # ==============================================================================
 
 @testset "Core Functionality Tests" begin
-
     @testset "evaluate_seed! function" begin
         X, y = MLJBase.@load_iris
         base_model = DecisionTreeClassifier(rng=42)
 
         # Create a RepeatedModel
         repeated = RepeatedModel(
-            base_model,
-            n_repeats=3,
-            resampling=CV(nfolds=3, rng=42),
-            measure=Accuracy(),
+            base_model, n_repeats=3, resampling=CV(nfolds=3, rng=42), measure=Accuracy()
         )
 
         # Create a machine with the base model
         mach = machine(base_model, X, y)
 
         # Test evaluate_seed! returns correct structure
-        result = RepeatedRestarts.evaluate_seed!(mach, repeated, repeated.resampling; verbosity=0)
+        result = RepeatedRestarts.evaluate_seed!(
+            mach, repeated, repeated.resampling; verbosity=0
+        )
 
         @test result isa NamedTuple
         @test haskey(result, :model)
@@ -431,22 +430,23 @@ end
             base_model,
             n_repeats=2,
             resampling=Holdout(fraction_train=0.7, rng=42),
-            measure=Accuracy()
+            measure=Accuracy(),
         )
 
-        result_holdout = RepeatedRestarts.evaluate_seed!(mach, repeated_holdout, repeated_holdout.resampling; verbosity=0)
+        result_holdout = RepeatedRestarts.evaluate_seed!(
+            mach, repeated_holdout, repeated_holdout.resampling; verbosity=0
+        )
         @test result_holdout isa NamedTuple
         @test all(0 .<= result_holdout.measurement .<= 1)
 
         # Test with InSample
         repeated_insample = RepeatedModel(
-            base_model,
-            n_repeats=2,
-            resampling=InSample(),
-            measure=Accuracy()
+            base_model, n_repeats=2, resampling=InSample(), measure=Accuracy()
         )
 
-        result_insample = RepeatedRestarts.evaluate_seed!(mach, repeated_insample, repeated_insample.resampling; verbosity=0)
+        result_insample = RepeatedRestarts.evaluate_seed!(
+            mach, repeated_insample, repeated_insample.resampling; verbosity=0
+        )
         @test result_insample isa NamedTuple
         @test all(0 .<= result_insample.measurement .<= 1)
     end
@@ -457,10 +457,7 @@ end
 
         # Test basic fit
         repeated = RepeatedModel(
-            base_model,
-            n_repeats=3,
-            resampling=CV(nfolds=3, rng=42),
-            measure=Accuracy(),
+            base_model, n_repeats=3, resampling=CV(nfolds=3, rng=42), measure=Accuracy()
         )
 
         mach = machine(repeated, X, y)
@@ -505,7 +502,7 @@ end
             n_repeats=3,
             return_mode=:best,
             resampling=CV(nfolds=2, rng=42),
-            measure=Accuracy()
+            measure=Accuracy(),
         )
 
         mach_best = machine(repeated_best, X, y)
@@ -521,7 +518,7 @@ end
             n_repeats=3,
             return_mode=:all,
             resampling=CV(nfolds=2, rng=42),
-            measure=Accuracy()
+            measure=Accuracy(),
         )
 
         mach_all = machine(repeated_all, X, y)
@@ -538,43 +535,51 @@ end
 # ==============================================================================
 
 @testset "MLJ Trait Tests" begin
-
     @testset "trait inheritance from wrapped models" begin
         # Test with DecisionTreeClassifier
         dt_classifier = DecisionTreeClassifier(rng=42)
         repeated_dt = RepeatedModel(dt_classifier)
 
         # Test that traits are inherited properly
-        @test MLJModelInterface.input_scitype(RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}) ==
-              MLJModelInterface.input_scitype(typeof(dt_classifier))
+        @test MLJModelInterface.input_scitype(
+            RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}
+        ) == MLJModelInterface.input_scitype(typeof(dt_classifier))
 
-        @test MLJModelInterface.target_scitype(RepeatedRestarts.DeterministicRepeatedModel{typeof(dt_classifier)}) ==
-              MLJModelInterface.target_scitype(typeof(dt_classifier))
+        @test MLJModelInterface.target_scitype(
+            RepeatedRestarts.DeterministicRepeatedModel{typeof(dt_classifier)}
+        ) == MLJModelInterface.target_scitype(typeof(dt_classifier))
 
-        @test MLJModelInterface.is_pure_julia(RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}) ==
-              MLJModelInterface.is_pure_julia(typeof(dt_classifier))
+        @test MLJModelInterface.is_pure_julia(
+            RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}
+        ) == MLJModelInterface.is_pure_julia(typeof(dt_classifier))
 
-        @test MLJModelInterface.supports_weights(RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}) ==
-              MLJModelInterface.supports_weights(typeof(dt_classifier))
+        @test MLJModelInterface.supports_weights(
+            RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}
+        ) == MLJModelInterface.supports_weights(typeof(dt_classifier))
 
-        @test MLJModelInterface.supports_class_weights(RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}) ==
-              MLJModelInterface.supports_class_weights(typeof(dt_classifier))
+        @test MLJModelInterface.supports_class_weights(
+            RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}
+        ) == MLJModelInterface.supports_class_weights(typeof(dt_classifier))
 
         # Test with DecisionTreeRegressor
         dt_regressor = DecisionTreeRegressor(rng=42)
         repeated_reg = RepeatedModel(dt_regressor)
 
-        @test MLJModelInterface.input_scitype(RepeatedRestarts.RepeatedModel{typeof(dt_regressor)}) ==
-              MLJModelInterface.input_scitype(typeof(dt_regressor))
+        @test MLJModelInterface.input_scitype(
+            RepeatedRestarts.RepeatedModel{typeof(dt_regressor)}
+        ) == MLJModelInterface.input_scitype(typeof(dt_regressor))
 
-        @test MLJModelInterface.target_scitype(RepeatedRestarts.DeterministicRepeatedModel{typeof(dt_regressor)}) ==
-              MLJModelInterface.target_scitype(typeof(dt_regressor))
+        @test MLJModelInterface.target_scitype(
+            RepeatedRestarts.DeterministicRepeatedModel{typeof(dt_regressor)}
+        ) == MLJModelInterface.target_scitype(typeof(dt_regressor))
     end
 
     @testset "constructor trait" begin
         dt_classifier = DecisionTreeClassifier(rng=42)
 
-        constructor_func = MLJModelInterface.constructor(RepeatedRestarts.RepeatedModel{typeof(dt_classifier)})
+        constructor_func = MLJModelInterface.constructor(
+            RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}
+        )
         @test constructor_func == RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}
     end
 
@@ -590,10 +595,7 @@ end
         X, y = MLJBase.@load_iris
         dt_classifier = DecisionTreeClassifier(rng=42)
         repeated = RepeatedModel(
-            dt_classifier,
-            n_repeats=3,
-            resampling=CV(nfolds=2, rng=42),
-            measure=Accuracy()
+            dt_classifier, n_repeats=3, resampling=CV(nfolds=2, rng=42), measure=Accuracy()
         )
 
         mach = machine(repeated, X, y)
@@ -605,7 +607,7 @@ end
         # Training losses should be a vector of decreasing (or equal) values
         @test losses isa AbstractVector
         @test length(losses) == repeated.n_repeats
-        @test all(losses[i] >= losses[i+1] for i in 1:(length(losses)-1))
+        @test all(losses[i] >= losses[i + 1] for i in 1:(length(losses) - 1))
     end
 
     @testset "reporting operations trait" begin
@@ -625,7 +627,9 @@ end
         reports_fi = MLJModelInterface.reports_feature_importances(typeof(dt_classifier))
 
         # RepeatedModel should inherit this trait
-        repeated_reports_fi = MLJModelInterface.reports_feature_importances(RepeatedRestarts.RepeatedModel{typeof(dt_classifier)})
+        repeated_reports_fi = MLJModelInterface.reports_feature_importances(
+            RepeatedRestarts.RepeatedModel{typeof(dt_classifier)}
+        )
         @test repeated_reports_fi == reports_fi
     end
 end
@@ -635,7 +639,6 @@ end
 # ==============================================================================
 
 @testset "RepeatedFitResult Constructor Tests" begin
-
     @testset "valid construction" begin
         # Test basic valid construction
         inner_results = [1, 2, 3]
@@ -677,32 +680,32 @@ end
         @test_throws AssertionError RepeatedRestarts.RepeatedFitResult(
             inner_results,
             [100, 200],  # shorter seeds
-            2
+            2,
         )
 
         @test_throws AssertionError RepeatedRestarts.RepeatedFitResult(
             [1, 2],  # shorter inner_results
             seeds,
-            2
+            2,
         )
 
         # Invalid best_index should throw assertion error
         @test_throws AssertionError RepeatedRestarts.RepeatedFitResult(
             inner_results,
             seeds,
-            0  # best_index too small
+            0,  # best_index too small
         )
 
         @test_throws AssertionError RepeatedRestarts.RepeatedFitResult(
             inner_results,
             seeds,
-            4  # best_index too large
+            4,  # best_index too large
         )
 
         @test_throws AssertionError RepeatedRestarts.RepeatedFitResult(
             inner_results,
             seeds,
-            -1  # negative best_index
+            -1,  # negative best_index
         )
     end
 
