@@ -44,6 +44,8 @@ function to_path(e::Expr)
     error("Unsupported rng_field expression: $(e)")
 end
 
+to_path(e::QuoteNode) = Symbol[e.value]
+
 # Does a nested field path exist?
 function has_nested(obj, path::Vector{Symbol})
     T = typeof(obj)
