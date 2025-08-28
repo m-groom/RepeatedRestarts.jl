@@ -69,10 +69,7 @@ end
         base_model = DecisionTreeClassifier(rng=42)
         # Force probabilistic behavior by wrapping appropriately
         repeated = RepeatedModel(
-            model=base_model,
-            n_repeats=5,
-            measure=LogLoss(),
-            refit=false
+            model=base_model, n_repeats=5, measure=LogLoss(), refit=false
         )
 
         @test repeated isa Union{
@@ -116,10 +113,7 @@ end
     @testset "constructor error cases" begin
         # Too many positional arguments
         @test_throws ArgumentError RepeatedModel(
-            DecisionTreeClassifier(),
-            DecisionTreeRegressor(),
-            n_repeats=3,
-            refit=false
+            DecisionTreeClassifier(), DecisionTreeRegressor(), n_repeats=3, refit=false
         )
 
         # No model provided
@@ -286,15 +280,23 @@ end
         base_model = DecisionTreeClassifier(rng=42)
 
         # Valid rng_field should work (may generate other warnings about default values)
-        repeated1 = RepeatedModel(base_model, rng_field=:rng, measure=Accuracy(), refit=false)
+        repeated1 = RepeatedModel(
+            base_model, rng_field=:rng, measure=Accuracy(), refit=false
+        )
         @test repeated1.rng_field == :rng
 
-        repeated2 = RepeatedModel(base_model, rng_field="rng", measure=Accuracy(), refit=false)
+        repeated2 = RepeatedModel(
+            base_model, rng_field="rng", measure=Accuracy(), refit=false
+        )
         @test repeated2.rng_field == "rng"
 
         # Invalid rng_field should throw during construction
-        @test_throws ErrorException RepeatedModel(base_model, rng_field=:nonexistent, refit=false)
-        @test_throws ErrorException RepeatedModel(base_model, rng_field="nonexistent", refit=false)
+        @test_throws ErrorException RepeatedModel(
+            base_model, rng_field=:nonexistent, refit=false
+        )
+        @test_throws ErrorException RepeatedModel(
+            base_model, rng_field="nonexistent", refit=false
+        )
     end
 
     @testset "n_repeats validation" begin
@@ -305,10 +307,14 @@ end
         @test repeated.n_repeats == 5
 
         # Invalid n_repeats should be corrected with warning
-        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(base_model, n_repeats=0, measure=Accuracy(), refit=false)
+        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(
+            base_model, n_repeats=0, measure=Accuracy(), refit=false
+        )
         @test repeated.n_repeats == 10
 
-        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(base_model, n_repeats=-5, measure=Accuracy(), refit=false)
+        repeated = @test_logs (:warn, r"n_repeats.*Resetting to 10") RepeatedModel(
+            base_model, n_repeats=-5, measure=Accuracy(), refit=false
+        )
         @test repeated.n_repeats == 10
     end
 
@@ -317,12 +323,16 @@ end
 
         # Valid return_mode values
         for mode in [:best, :aggregate, :all]
-            repeated = RepeatedModel(base_model, return_mode=mode, measure=Accuracy(), refit=false)
+            repeated = RepeatedModel(
+                base_model, return_mode=mode, measure=Accuracy(), refit=false
+            )
             @test repeated.return_mode == mode
         end
 
         # Invalid return_mode should be corrected with warning
-        repeated = @test_logs (:warn, r"return_mode.*Resetting to :best") RepeatedModel(base_model, return_mode=:invalid, measure=Accuracy(), refit=false)
+        repeated = @test_logs (:warn, r"return_mode.*Resetting to :best") RepeatedModel(
+            base_model, return_mode=:invalid, measure=Accuracy(), refit=false
+        )
         @test repeated.return_mode == :best
     end
 
@@ -331,12 +341,16 @@ end
 
         # Valid aggregation values
         for agg in [:mean, :median, :mode, :vote]
-            repeated = RepeatedModel(base_model, aggregation=agg, measure=Accuracy(), refit=false)
+            repeated = RepeatedModel(
+                base_model, aggregation=agg, measure=Accuracy(), refit=false
+            )
             @test repeated.aggregation == agg
         end
 
         # Invalid aggregation should be corrected with warning
-        repeated = @test_logs (:warn, r"aggregation.*Resetting to :mean") RepeatedModel(base_model, aggregation=:invalid, measure=Accuracy(), refit=false)
+        repeated = @test_logs (:warn, r"aggregation.*Resetting to :mean") RepeatedModel(
+            base_model, aggregation=:invalid, measure=Accuracy(), refit=false
+        )
         @test repeated.aggregation == :mean
     end
 
@@ -345,15 +359,14 @@ end
 
         # refit=true with InSample should be corrected with warning
         repeated = @test_logs (:warn, r"refit=true is not required.*Resetting to false") RepeatedModel(
-            base_model,
-            refit=true,
-            resampling=InSample(),
-            measure=Accuracy()
+            base_model, refit=true, resampling=InSample(), measure=Accuracy()
         )
         @test repeated.refit == false
 
         # refit=false with InSample should be fine
-        repeated = RepeatedModel(base_model, refit=false, resampling=InSample(), measure=Accuracy())
+        repeated = RepeatedModel(
+            base_model, refit=false, resampling=InSample(), measure=Accuracy()
+        )
         @test repeated.refit == false
 
         # refit=true with other resampling should be fine
@@ -365,7 +378,9 @@ end
         base_model = DecisionTreeClassifier(rng=42)
 
         # measure=nothing should be auto-detected with warning
-        repeated = @test_logs (:warn, r"No measure specified.*Setting measure=") RepeatedModel(base_model, measure=nothing, refit=false)
+        repeated = @test_logs (:warn, r"No measure specified.*Setting measure=") RepeatedModel(
+            base_model, measure=nothing, refit=false
+        )
         @test repeated.measure !== nothing
     end
 
@@ -378,7 +393,7 @@ end
             acceleration=CPUProcesses(),
             acceleration_resampling=CPUProcesses(),
             measure=Accuracy(),
-            refit=false
+            refit=false,
         )
 
         # CPUThreads + CPUProcesses should be corrected with warning
@@ -388,7 +403,7 @@ end
             acceleration=CPUThreads(),
             acceleration_resampling=CPUProcesses(),
             measure=Accuracy(),
-            refit=false
+            refit=false,
         )
         @test repeated.acceleration isa CPUProcesses
         @test repeated.acceleration_resampling isa CPUThreads
@@ -447,11 +462,7 @@ end
 
         # Test with InSample
         repeated_insample = RepeatedModel(
-            base_model,
-            n_repeats=2,
-            resampling=InSample(),
-            measure=Accuracy(),
-            refit=false
+            base_model, n_repeats=2, resampling=InSample(), measure=Accuracy(), refit=false
         )
 
         result_insample = RepeatedRestarts.evaluate_seed!(
