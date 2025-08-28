@@ -1,5 +1,7 @@
 # build one history entry by evaluating `mach` (resampling or in-sample)
-function evaluate_seed!(mach, wrapper::RepeatedModel, resampling=InSample(); verbosity::Int=0)
+function evaluate_seed!(
+    mach, wrapper::RepeatedModel, resampling=InSample(); verbosity::Int=0
+)
     E = evaluate!(
         mach;
         resampling=resampling,
