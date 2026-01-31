@@ -115,7 +115,7 @@ function RepeatedModel(
     return_mode=:best,
     aggregation=:mean,
     refit=true,
-    acceleration=CPU1(), # TODO: currently unused
+    acceleration=CPU1(),
     acceleration_resampling=CPU1(),
     check_measure=true,
     cache=true,
@@ -205,6 +205,10 @@ function MMI.clean!(wrapper::RepeatedModel)
         message *= "aggregation must be :mean, :median, :mode, or :vote. Got $(wrapper.aggregation). Resetting to :mean. "
         wrapper.aggregation = :mean
     end
+    if wrapper.aggregation == :median && wrapper isa ProbabilisticRepeatedModel
+        message *= "aggregation=:median is not supported for probabilistic models. Resetting to :mean. "
+        wrapper.aggregation = :mean
+    end
     # Check refit
     if wrapper.refit && wrapper.resampling isa InSample
         message *= "refit=true is not required when resampling is InSample. Resetting to false. "
@@ -249,6 +253,7 @@ function MMI.clean!(wrapper::RepeatedModel)
         wrapper.acceleration_resampling = CPUThreads()
     end
     wrapper.acceleration = MLJBase._process_accel_settings(wrapper.acceleration)
+    wrapper.acceleration_resampling = MLJBase._process_accel_settings(wrapper.acceleration_resampling)
 
     return message
 end
@@ -315,6 +320,76 @@ struct RepeatedFitResult
 end
 
 # ==============================================================================
+# Prediction aggregation
+# ==============================================================================
+
+# Aggregate predictions for deterministic models
+function aggregate_predictions(
+    preds_vecs::Vector, aggregation::Symbol, ::DeterministicRepeatedModel
+)
+    if aggregation == :mean
+        return mean(preds_vecs)
+    elseif aggregation == :median
+        n = length(preds_vecs[1])
+        return [
+            Statistics.median([preds_vecs[j][i] for j in eachindex(preds_vecs)]) for
+            i in 1:n
+        ]
+    elseif aggregation in (:mode, :vote)
+        out = similar(preds_vecs[1])
+        return vote_majority!(out, preds_vecs)
+    else
+        error("Unsupported aggregation method: $aggregation")
+    end
+end
+
+#=
+TODO: Normalise class pools for :vote (outline):
+
+1) Build a union of classes across all prediction vectors so every label
+   appears in a single, consistent class pool.
+2) Map each voted label to this unioned pool; if a label is missing, raise a
+   clear error or expand the pool to include it.
+3) Construct the indicator `UnivariateFinite` using the unioned class list to
+   avoid `findfirst` returning `nothing`.
+
+Other files to update:
+- test/main.jl: add a case where different repeats emit different class pools.
+- README.md: document :vote behaviour when class pools differ.
+=#
+
+# Aggregate predictions for probabilistic models
+function aggregate_predictions(
+    preds_vecs::Vector, aggregation::Symbol, ::ProbabilisticRepeatedModel
+)
+    if aggregation == :mean
+        return aggregate_probs(preds_vecs)
+    elseif aggregation == :median
+        error(
+            "Aggregation :median is not supported for " *
+            "probabilistic models. Use :mean instead.",
+        )
+    elseif aggregation in (:mode, :vote)
+        # Extract hard labels via mode, then vote
+        mode_vecs = [MLJBase.mode.(yh) for yh in preds_vecs]
+        out = similar(mode_vecs[1])
+        votes = vote_majority!(out, mode_vecs)
+        # Wrap as UnivariateFinite (0/1 probabilities)
+        classes = MMI.classes(preds_vecs[1][1])
+        n = length(votes)
+        L = length(classes)
+        P = zeros(Float64, n, L)
+        for i in 1:n
+            j = findfirst(==(votes[i]), classes)
+            P[i, j] = 1.0
+        end
+        return MMI.UnivariateFinite(classes, P)
+    else
+        error("Unsupported aggregation method: $aggregation")
+    end
+end
+
+# ==============================================================================
 # Fit Methods
 # ==============================================================================
 
@@ -326,96 +401,77 @@ function MMI.fit(wrapper::RepeatedModel, verbosity::Int, args...)
     seeds = rand(rng, 1:typemax(Int32), wrapper.n_repeats)
     path = to_path(wrapper.rng_field)
 
-    # evaluate n_repeats candidates
-    history = Vector{NamedTuple}(undef, wrapper.n_repeats)
-    models = Vector{Any}(undef, wrapper.n_repeats)
-    inner_fitresults = Vector{Any}(undef, wrapper.n_repeats)
-    inner_reports = Vector{Any}(undef, wrapper.n_repeats)
-    if wrapper.cache
-        inner_caches = Vector{Any}(undef, wrapper.n_repeats)
-    end
+    # Evaluate all seeds
+    results = fit_seeds!(wrapper, seeds, path, args...; verbosity=verbosity)
 
-    for (i, s) in enumerate(seeds)
-        m = deepcopy(wrapper.model)
-        set_rng!(m, path, s)
-        mach = machine(m, args...)
-        # Prepare a per-seed resampling object as a deep copy so its RNG state
-        # (if any) is reset to the initial state for every seed.
-        resampling = deepcopy(wrapper.resampling)
-        history[i] = evaluate_seed!(mach, wrapper, resampling; verbosity=verbosity)
-        models[i] = m
-        inner_fitresults[i] = mach.fitresult
-        if wrapper.cache
-            inner_caches[i] = mach.cache
-        end
-        inner_reports[i] = MLJBase.report(mach)
-    end
-
-    # Choose best using MLJTuning.losses over the history
-    losses = MLJTuning.losses(wrapper.selection_heuristic, history)
-    best_idx = argmin(losses)
-
-    # Generate fitresult
-    if wrapper.return_mode == :best
-        if wrapper.refit # Refit models on all data if requested
-            best_model = models[best_idx]
-            set_rng!(best_model, path, seeds[best_idx])
-            mach = machine(best_model, args...)
-            fit!(mach; verbosity=verbosity)
-            inner_fitresults[best_idx] = mach.fitresult
-            if wrapper.cache
-                inner_caches[best_idx] = mach.cache
-            end
-            inner_reports[best_idx] = MLJBase.report(mach)
-        end
-        fitresult = RepeatedFitResult([inner_fitresults[best_idx]], [seeds[best_idx]], 1)
-        c = wrapper.cache ? inner_caches[best_idx] : nothing
-        r = inner_reports[best_idx]
-    else
-        if wrapper.refit # Refit models on all data if requested
-            for i in 1:wrapper.n_repeats
-                model = models[i]
-                set_rng!(model, path, seeds[i])
-                mach = machine(model, args...)
-                fit!(mach; verbosity=verbosity)
-                inner_fitresults[i] = mach.fitresult
-                if wrapper.cache
-                    inner_caches[i] = mach.cache
-                end
-                inner_reports[i] = MLJBase.report(mach)
-            end
-        end
-        fitresult = RepeatedFitResult(inner_fitresults, seeds, best_idx)
-        c = wrapper.cache ? inner_caches : nothing
-        r = inner_reports
-    end
-
-    # Generate report
-    report = (
-        best_index=best_idx,
-        best_seed=seeds[best_idx],
-        best_model=models[best_idx],
-        best_history_entry=history[best_idx],
-        history=history,
-        seeds=seeds,
-        inner_report=r,
+    return _build_result(
+        wrapper,
+        seeds,
+        results.history,
+        results.models,
+        results.inner_fitresults,
+        results.inner_reports,
+        results.inner_caches,
+        path,
+        args...;
+        verbosity=verbosity,
     )
-
-    # Generate cache
-    if wrapper.cache
-        cache = (inner_cache=c,)
-    else
-        cache = nothing
-    end
-
-    return fitresult, cache, report
 end
 
-# Common implementation for update - handles cases where n_repeats has been increased
+# Common implementation for update — handles incremental increases of
+# n_repeats by evaluating only the new seeds.
 function MMI.update(
     wrapper::RepeatedModel, verbosity::Int, fitresult::RepeatedFitResult, old_cache, args...
 )
-    # TODO: implement
+    old_n = length(old_cache.seeds)
+    new_n = wrapper.n_repeats
+
+    # If n_repeats decreased or unchanged, exit
+    if new_n <= old_n
+        @warn "n_repeats decreased or unchanged. Exiting update."
+        return fitresult, old_cache, old_cache.report
+    end
+
+    # Generate the full seed sequence deterministically
+    rng = get_rng(wrapper.random_state)
+    all_seeds = rand(rng, 1:typemax(Int32), new_n)
+    path = to_path(wrapper.rng_field)
+
+    # Verify old seeds match (same random_state)
+    if all_seeds[1:old_n] != old_cache.seeds
+        @warn "wrapper.random_state has changed. Exiting update."
+        return fitresult, old_cache, old_cache.report
+    end
+
+    # --- Evaluate only new seeds ---
+    new_seeds = all_seeds[(old_n + 1):new_n]
+    new_results = fit_seeds!(wrapper, new_seeds, path, args...; verbosity=verbosity)
+
+    # --- Combine old and new results ---
+    all_history = vcat(old_cache.history, new_results.history)
+    all_models = vcat(old_cache.models, new_results.models)
+    all_inner_fitresults = vcat(old_cache.inner_fitresults, new_results.inner_fitresults)
+    all_inner_reports = vcat(old_cache.inner_reports, new_results.inner_reports)
+    all_inner_caches =
+        if old_cache.inner_caches !== nothing && new_results.inner_caches !== nothing
+            vcat(old_cache.inner_caches, new_results.inner_caches)
+        else
+            nothing
+        end
+
+    return _build_result(
+        wrapper,
+        all_seeds,
+        all_history,
+        all_models,
+        all_inner_fitresults,
+        all_inner_reports,
+        all_inner_caches,
+        path,
+        args...;
+        verbosity=verbosity,
+        refit_indices=(old_n + 1):new_n,
+    )
 end
 
 # ==============================================================================
@@ -425,7 +481,23 @@ end
 function MMI.transform(
     wrapper::UnsupervisedRepeatedModel, fitresult::RepeatedFitResult, args...
 )
-    # TODO: implement
+    # Reformat data for the inner model
+    reformatted_args = MMI.reformat(wrapper.model, args...)
+
+    if wrapper.return_mode == :best
+        return MMI.transform(wrapper.model, fitresult.inner_fitresult[1], reformatted_args...)
+    end
+
+    transforms = [
+        MMI.transform(wrapper.model, fitresult.inner_fitresult[i], reformatted_args...) for
+        i in eachindex(fitresult.inner_fitresult)
+    ]
+
+    if wrapper.return_mode == :all
+        return transforms
+    else  # :aggregate
+        return aggregate_transforms(transforms, wrapper.aggregation)
+    end
 end
 
 # Common implementation for predict - supervised models only
@@ -434,7 +506,24 @@ function MMI.predict(
     fitresult::RepeatedFitResult,
     args...,
 )
-    # TODO: implement
+    # Reformat data for the inner model
+    reformatted_args = MMI.reformat(wrapper.model, args...)
+
+    if wrapper.return_mode == :best
+        return MMI.predict(wrapper.model, fitresult.inner_fitresult[1], reformatted_args...)
+    end
+
+    # Collect predictions from all inner fitresults
+    preds = [
+        MMI.predict(wrapper.model, fitresult.inner_fitresult[i], reformatted_args...) for
+        i in eachindex(fitresult.inner_fitresult)
+    ]
+
+    if wrapper.return_mode == :all
+        return preds
+    else  # :aggregate
+        return aggregate_predictions(preds, wrapper.aggregation, wrapper)
+    end
 end
 
 # ==============================================================================
@@ -456,11 +545,14 @@ function MMI.feature_importances(
     wrapper::RepeatedModel, fitresult::RepeatedFitResult, report
 )
     if wrapper.return_mode == :best
-        return MMI.feature_importances(wrapper.model, fitresult.inner_fitresult[1], report)
+        return MMI.feature_importances(
+            wrapper.model, fitresult.inner_fitresult[1], report.inner_report
+        )
     else
         return [
-            MMI.feature_importances(wrapper.model, fitresult.inner_fitresult[i], report) for
-            i in eachindex(fitresult.inner_fitresult)
+            MMI.feature_importances(
+                wrapper.model, fitresult.inner_fitresult[i], report.inner_report[i]
+            ) for i in eachindex(fitresult.inner_fitresult)
         ]
     end
 end
@@ -472,7 +564,11 @@ end
 """
 $(MMI.doc_header(RepeatedModel))
 
-TODO: add documentation
+Wraps any MLJ model to train it multiple times with different random seeds,
+evaluating each repeat with a resampling strategy (or in-sample) and
+selecting the best result according to a selection heuristic.  This is
+useful for models whose performance depends on random initialisation, such
+as neural networks, clustering algorithms, or decision trees.
 
 # Training data
 
@@ -483,48 +579,135 @@ In MLJ or MLJBase, bind an instance `repeated_model` to data with
 where
 
 - `X`: any table of input features (e.g., a `DataFrame`) whose columns
-  each have a scitype compatible with the wrapped model `repeated_model.model`; check column scitypes with `schema(X)` and model-compatible scitypes with `input_scitype(repeated_model.model)`
+  each have a scitype compatible with the wrapped model; check column
+  scitypes with `schema(X)` and model-compatible scitypes with
+  `input_scitype(repeated_model.model)`
 
 - `y`: the target, which can be any `AbstractVector` whose element
-  scitype is compatible with the wrapped model `repeated_model.model`; check the scitype
-  with `scitype(y)` and model-compatible scitypes with `target_scitype(repeated_model.model)`
+  scitype is compatible with the wrapped model; check the scitype with
+  `scitype(y)` and model-compatible scitypes with
+  `target_scitype(repeated_model.model)`
+
+For unsupervised wrapped models, omit `y`.
 
 Train the machine with `fit!(mach, rows=...)`.
 
 
 # Hyperparameters
 
-- `model::M`: The wrapped MLJ model
+- `model::M`: The MLJ model to be wrapped.  Must have a field
+  (or nested field) that accepts a random seed or RNG, as specified by
+  `rng_field`.
 
-- `n_repeats::Int = 10`: Number of times to repeat the model
+- `rng_field::Union{Symbol,Expr,String} = :rng`: Name (or dotted path)
+  of the field on `model` that controls random number generation.  Each
+  repeat sets this field to a different seed derived from `random_state`.
 
-- `resampling::Union{Nothing,ResamplingStrategy} = nothing`: Resampling strategy to use for repeated training
+- `n_repeats::Int = 10`: Number of times to fit the model with different
+  random seeds.  Increasing `n_repeats` on an already-fitted machine
+  triggers an incremental update (only the new seeds are evaluated).
 
-- `measure::Union{Nothing,Measure} = nothing`: Measure to use for repeated training
+- `resampling = InSample()`: Resampling strategy used to evaluate each
+  repeat.  Any MLJ `ResamplingStrategy` is supported (e.g., `Holdout`,
+  `CV`).  When set to `InSample()`, each repeat is evaluated on the
+  training data directly and `refit` is automatically set to `false`.
 
-- `weights::Union{Nothing,AbstractVector{<:Real}} = nothing`: Sample weights to use for repeated training
+- `measure = nothing`: Performance measure used to rank repeats.  If
+  `nothing`, a default measure is inferred from the wrapped model.
 
-- TODO: complete this
+- `weights::Union{Nothing,AbstractVector{<:Real}} = nothing`: Per-sample
+  weights passed to the resampling evaluation.
+
+- `class_weights::Union{Nothing,AbstractDict} = nothing`: Class weights
+  passed to the resampling evaluation.
+
+- `operation = nothing`: Operation used for evaluation (e.g.,
+  `predict`, `predict_mode`).  If `nothing`, MLJ determines the
+  appropriate operation from the measure.
+
+- `selection_heuristic::MLJTuning.SelectionHeuristic = NaiveSelection()`:
+  Heuristic used to select the best repeat from the evaluation history.
+
+- `return_mode::Symbol = :best`: Controls what `predict` / `transform`
+  return.  One of:
+  - `:best` — use only the best repeat's fitresult.
+  - `:all`  — return a vector of predictions/transforms, one per repeat.
+  - `:aggregate` — aggregate predictions/transforms across all repeats
+    according to `aggregation`.
+
+- `aggregation::Symbol = :mean`: Aggregation method when
+  `return_mode = :aggregate`.  One of `:mean`, `:median` (deterministic
+  and unsupervised only), `:mode`, or `:vote`.
+
+- `refit::Bool = true`: Whether to refit the selected model(s) on the
+  full training data after selection.  Automatically set to `false` when
+  `resampling = InSample()`.
+
+- `acceleration::AbstractResource = CPU1()`: Computational resource
+  for the outer seed-evaluation loop.  Use `CPUThreads()` for
+  multi-threaded or `CPUProcesses()` for multi-process parallelism.
+
+- `acceleration_resampling::AbstractResource = CPU1()`: Computational
+  resource used for resampling evaluation (e.g., `CPUThreads()`).
+
+- `check_measure::Bool = true`: Whether to verify compatibility between
+  the measure, model, and data scitypes.
+
+- `cache::Bool = true`: Whether to cache the inner models' caches.
+  Setting to `false` reduces memory usage but disables access to inner
+  model caches.
+
+- `compact_history::Bool = true`: Whether to use compact history entries
+  (omits per-fold details from the evaluation history).
+
+- `random_state::Union{AbstractRNG,Integer} = Random.default_rng()`:
+  Seed or RNG used to generate the per-repeat random seeds.  Set to a
+  fixed integer for reproducible results.
+
 
 # Operations
 
-- `transform(mach, Xnew)`: transform new data `Xnew` having the same scitype as `X` above.
+- `predict(mach, Xnew)`: For supervised wrapped models, return predictions of the target
+  given features `Xnew`.  The output depends on `return_mode`:
+  - `:best` — a single prediction vector from the best repeat.
+  - `:all`  — a vector of prediction vectors, one per repeat.
+  - `:aggregate` — a single prediction vector aggregated across repeats.
 
-- `predict(mach, Xnew)`: return predictions of the target from the wrapped model given
-  features `Xnew` having the same scitype as `X` above.
+- `transform(mach, Xnew)`: For unsupervised wrapped models, transform `Xnew`.
+  Output depends on `return_mode` in the same way as `predict`.
+
 
 # Fitted parameters
 
 The fields of `fitted_params(mach)` are:
 
-- `inner_params`: The fitted parameters of the wrapped model
+When `return_mode = :best`:
+- The fitted parameters of the best repeat's inner model (same structure
+  as `fitted_params` of the wrapped model).
+
+When `return_mode ∈ {:all, :aggregate}`:
+- A vector of fitted parameter NamedTuples, one per repeat.
 
 
 # Report
 
 The fields of `report(mach)` are:
 
-- TODO: complete this
+- `best_index`: Index of the best repeat.
+
+- `best_seed`: Random seed used for the best repeat.
+
+- `best_model`: The inner model instance of the best repeat (with its
+  `rng_field` set to `best_seed`).
+
+- `best_history_entry`: Evaluation history entry for the best repeat.
+
+- `history`: Vector of evaluation history entries, one per repeat.
+
+- `seeds`: Vector of random seeds, one per repeat.
+
+- `inner_report`: Report from the inner model.  A single NamedTuple when
+  `return_mode = :best`, or a vector of NamedTuples otherwise.
 
 
 # Examples
@@ -532,12 +715,37 @@ The fields of `report(mach)` are:
 ```
 using MLJ
 using RepeatedRestarts
+using DecisionTree: DecisionTreeClassifier
 
-# TODO: add example
+# Load example dataset
+X, y = @load_iris
 
-# Access fitted parameters
+# Create a repeated classifier
+model = RepeatedModel(
+    DecisionTreeClassifier(rng=42);
+    n_repeats=5,
+    resampling=Holdout(rng=123),
+    measure=LogLoss(),
+    random_state=101,
+)
+mach = machine(model, X, y)
+fit!(mach)
+
+# Make predictions (from the best repeat)
+yhat = predict(mach, X)
+
+# Inspect the report
+report(mach).best_index        # which repeat was best
+report(mach).best_seed         # its random seed
+report(mach).history           # full evaluation history
+
+# Access fitted parameters of the best inner model
 fp = fitted_params(mach)
-fp.inner_params                # fitted parameters of the wrapped model
+
+# Incremental update: increase n_repeats and refit
+model.n_repeats = 8
+fit!(mach)                     # evaluates only 3 new seeds
+length(report(mach).history)   # 8
 ```
 
 """
