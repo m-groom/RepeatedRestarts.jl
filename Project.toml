@@ -1,10 +1,11 @@
 name = "RepeatedRestarts"
 uuid = "c5ef7d8a-4f32-44df-9bf1-d1a5ca83e999"
-authors = ["Michael <michael.groom@sydney.edu.au>"]
 version = "0.1.0"
+authors = ["Michael <michael.groom@sydney.edu.au>"]
 
 [deps]
 ComputationalResources = "ed09eef8-17a6-5b46-8889-db040fac31e3"
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 MLJBase = "a7f614a8-145f-11e9-1d2a-a57a1082229d"
 MLJModelInterface = "e80e1ace-859a-464e-9ed9-23947d8ae3ea"
 MLJTuning = "03970b2e-30c4-11ea-3135-d1576263f10f"
@@ -14,6 +15,7 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 [compat]
 Aqua = "0.8"
 ComputationalResources = "0.3"
+Distributed = "1.9, 1.10, 1.11"
 MLJBase = "1.7"
 MLJDecisionTreeInterface = "0.4"
 MLJModelInterface = "1.11"
