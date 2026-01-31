@@ -6,6 +6,7 @@ using Statistics
 using MLJTuning
 using MLJBase
 using ComputationalResources
+using Distributed
 
 # Include model
 include("helpers.jl")
