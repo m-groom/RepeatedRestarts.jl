@@ -111,50 +111,92 @@ function set_rng!(model, rng_path::Vector{Symbol}, seed::Int)
     return model
 end
 
-# # Majority vote for categorical hard labels (tie-breaker = first seen)
-# function vote_majority!(out, preds_vecs::Vector{<:AbstractVector})
-#     n = length(preds_vecs[1])
-#     @inbounds for i in 1:n
-#         counts = Dict{Any,Int}()
-#         for p in preds_vecs
-#             v = p[i]
-#             counts[v] = get(counts, v, 0) + 1
-#         end
-#         # pick argmax count
-#         best = nothing
-#         bestc = -1
-#         for (k,c) in counts
-#             if c > bestc
-#                 best = k; bestc = c
-#             end
-#         end
-#         out[i] = best
-#     end
-#     return out
-# end
+# ==============================================================================
+# Aggregation helpers
+# ==============================================================================
 
-# # Efficient probability averaging for UnivariateFinite vectors (probabilistic classification)
-# function prob_mean_uf(yhat_vecs::Vector)
-#     # assume each element is AbstractVector{<:UnivariateFinite}
-#     first_vec = yhat_vecs[1]
-#     n = length(first_vec)
-#     classes = MMI.classes(first_vec[1])
-#     L = length(classes)
-#     P = zeros(Float64, L, n)  # rows=classes, cols=observations
+#=
+TODO: Deterministic tie-breaking via an ordered map (outline):
 
-#     for yh in yhat_vecs
-#         @inbounds for j in 1:L
-#             c = classes[j]
-#             # pdf.(yh, c) returns a vector of length n
-#             # accumulate into P[j, :]
-#             pj = Distributions.pdf.(yh, Ref(c))
-#             @inbounds @simd for i in 1:n
-#                 P[j, i] += pj[i]
-#             end
-#         end
-#     end
-#     P ./= length(yhat_vecs)
-#     # Construct UnivariateFinite array from a probability matrix (see MMI quick-start note)
-#     # This uses the "dummy" constructor bound when MLJBase is loaded.
-#     return MMI.UnivariateFinite(classes, P)
-# end
+1) Replace Dict with an ordered map (e.g. DataStructures.OrderedDict) so
+   iteration order matches insertion order ("first seen").
+2) When counting, only insert a label on first sight; then update its count.
+3) When selecting the winner, iterate the ordered map and only update the
+   current best when the new count is strictly greater (ties keep first seen).
+
+Other files to update if you adopt OrderedDict:
+- Project.toml: add DataStructures to [deps].
+- src/RepeatedRestarts.jl (or src/helpers.jl): add `using DataStructures`.
+- test/main.jl: add a tie case asserting deterministic "first seen" behaviour.
+- README.md: note deterministic tie-breaking and the extra dependency.
+=#
+
+# Majority vote for categorical hard labels (tie-breaker = first seen)
+function vote_majority!(out, preds_vecs::Vector{<:AbstractVector})
+    n = length(preds_vecs[1])
+    @inbounds for i in 1:n
+        counts = Dict{Any,Int}()
+        for p in preds_vecs
+            v = p[i]
+            counts[v] = get(counts, v, 0) + 1
+        end
+        # Pick argmax count
+        best = nothing
+        bestc = -1
+        for (k, c) in counts
+            if c > bestc
+                best = k
+                bestc = c
+            end
+        end
+        out[i] = best
+    end
+    return out
+end
+
+# Averaging of UnivariateFinite vectors
+function aggregate_probs(yhat_vecs::Vector{<:UnivariateFinite})
+    first_vec = yhat_vecs[1]
+    n = length(first_vec)
+    classes = MMI.classes(first_vec[1])
+    L = length(classes)
+    # Aggregated probabilities: rows = observations, cols = classes
+    P = zeros(Float64, n, L)
+
+    for yh in yhat_vecs
+        @inbounds for j in 1:L
+            c = classes[j]
+            pj = MLJBase.pdf.(yh, Ref(c))
+            @inbounds @simd for i in 1:n
+                P[i, j] += pj[i]
+            end
+        end
+    end
+    P ./= length(yhat_vecs)
+    return MMI.UnivariateFinite(classes, P)
+end
+
+# ==============================================================================
+# Transform aggregation
+# ==============================================================================
+
+# Aggregate transform outputs for unsupervised models
+function aggregate_transforms(trans_vecs::Vector{<:Number}, aggregation::Symbol)
+    first_t = trans_vecs[1]
+    if aggregation == :mean
+        return mean(trans_vecs)
+    elseif aggregation == :median
+        stacked = cat(
+            [reshape(t, size(t)..., 1) for t in trans_vecs]...; dims=ndims(first_t) + 1
+        )
+        return dropdims(
+            mapslices(Statistics.median, stacked; dims=ndims(first_t) + 1);
+            dims=ndims(first_t) + 1,
+        )
+    else
+        error(
+            "Unsupported aggregation method for transforms: " *
+            "$aggregation. Use :mean or :median.",
+        )
+    end
+end
