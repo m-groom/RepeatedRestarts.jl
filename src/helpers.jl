@@ -2,6 +2,28 @@
 # Helper functions
 # ==============================================================================
 
+# Helper function to get the worker pool for CPUProcesses
+function _cpu_processes_pool(accel::CPUProcesses)
+    settings = accel.settings
+    if settings === nothing
+        return nothing
+    end
+    if isdefined(Distributed, :AbstractWorkerPool) &&
+        settings isa Distributed.AbstractWorkerPool
+        return settings
+    elseif settings isa AbstractVector{<:Integer}
+        return Distributed.WorkerPool(collect(settings))
+    elseif settings isa Integer
+        n = Int(settings)
+        n <= 0 && return nothing
+        w = Distributed.workers()
+        isempty(w) && return nothing
+        return Distributed.WorkerPool(w[1:min(n, length(w))])
+    else
+        return nothing
+    end
+end
+
 # Helper function to get RNG
 get_rng(random_state::Integer) = Xoshiro(random_state)
 get_rng(random_state::AbstractRNG) = random_state
