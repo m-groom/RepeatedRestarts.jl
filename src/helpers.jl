@@ -46,6 +46,22 @@ end
 
 to_path(e::QuoteNode) = Symbol[e.value]
 
+#=
+TODO: Robust nested-field validation (outline):
+
+1) Traverse the actual object values with `getfield` rather than only field
+   types, so abstract/Union-typed fields are handled correctly.
+2) At each step, guard against missing fields; if a field is missing on the
+   current value, return false immediately.
+3) Optionally fall back to type-based checks when `getfield` is not safe
+   (e.g., if a field is declared but uninitialised in a mutable struct).
+
+Other files to update:
+- test/main.jl: add a test with an abstract/Union-typed intermediate field
+  that still resolves at runtime.
+- README.md: document `rng_field` validation behaviour for nested fields.
+=#
+
 # Does a nested field path exist?
 function has_nested(obj, path::Vector{Symbol})
     T = typeof(obj)
