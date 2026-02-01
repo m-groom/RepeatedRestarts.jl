@@ -2,8 +2,6 @@
 # RepeatedModel Definition
 # ==============================================================================
 
-const MMI = MLJModelInterface
-
 # Define wrapper structs for each MLJ model type
 mutable struct DeterministicRepeatedModel{M} <: MMI.Deterministic
     model::M
@@ -429,7 +427,7 @@ function MMI.update(
     # If n_repeats decreased or unchanged, exit
     if new_n <= old_n
         @warn "n_repeats decreased or unchanged. Exiting update."
-        return fitresult, old_cache, old_cache.report
+        return fitresult, old_cache, extract_report_from_cache(old_cache)
     end
 
     # Generate the full seed sequence deterministically
@@ -440,7 +438,7 @@ function MMI.update(
     # Verify old seeds match (same random_state)
     if all_seeds[1:old_n] != old_cache.seeds
         @warn "wrapper.random_state has changed. Exiting update."
-        return fitresult, old_cache, old_cache.report
+        return fitresult, old_cache, extract_report_from_cache(old_cache)
     end
 
     # --- Evaluate only new seeds ---

@@ -8,6 +8,8 @@ using MLJBase
 using ComputationalResources
 using Distributed
 
+const MMI = MLJModelInterface
+
 # Include model
 include("helpers.jl")
 include("main.jl")

@@ -28,6 +28,19 @@ end
 get_rng(random_state::Integer) = Xoshiro(random_state)
 get_rng(random_state::AbstractRNG) = random_state
 
+# Extract report NamedTuple from cache
+function extract_report_from_cache(cache)
+    return (
+        best_index=cache.best_index,
+        best_seed=cache.best_seed,
+        best_model=cache.best_model,
+        best_history_entry=cache.best_history_entry,
+        history=cache.history,
+        seeds=cache.seeds,
+        inner_report=cache.inner_report,
+    )
+end
+
 # Normalize rng_field into a Vector{Symbol}
 to_path(s::Symbol) = Symbol[s]
 to_path(s::AbstractString) = Symbol.(split(s, "."))
@@ -193,7 +206,7 @@ function vote_majority!(out, preds_vecs::Vector{<:AbstractVector})
 end
 
 # Averaging of UnivariateFinite vectors
-function aggregate_probs(yhat_vecs::Vector{<:UnivariateFinite})
+function aggregate_probs(yhat_vecs::Vector{<:MLJBase.CategoricalDistributions.UnivariateFiniteVector})
     first_vec = yhat_vecs[1]
     n = length(first_vec)
     classes = MMI.classes(first_vec[1])
@@ -219,8 +232,11 @@ end
 # ==============================================================================
 
 # Aggregate transform outputs for unsupervised models
-function aggregate_transforms(trans_vecs::Vector{<:Number}, aggregation::Symbol)
+function aggregate_transforms(trans_vecs::Vector, aggregation::Symbol)
     first_t = trans_vecs[1]
+    if !(first_t isa Number || (first_t isa AbstractArray && eltype(first_t) <: Number))
+        error("Unsupported transform output type: $(eltype(first_t)).")
+    end
     if aggregation == :mean
         return mean(trans_vecs)
     elseif aggregation == :median

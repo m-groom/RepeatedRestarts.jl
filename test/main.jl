@@ -6,12 +6,16 @@ using MLJDecisionTreeInterface
 using StatisticalMeasures
 using Random
 
+const MMI = MLJModelInterface
+
+include("kmeans.jl")
+
 @testset "Best model refit reproducibility" begin
     # Load data
     X, y = MLJBase.@load_iris
 
     # Base model that uses an `rng` field
-    base_model = RandomForestClassifier(rng=101) # TODO: set hyperparamters to promote higher variance
+    base_model = RandomForestClassifier(rng=101, n_trees=2, max_depth=3)
 
     # Wrap in RepeatedModel; with InSample resampling, refit gets disabled by clean!
     repeated = RepeatedModel(
@@ -30,8 +34,7 @@ using Random
     rep = report(mach_rep)
     loss = rep.best_history_entry.measurement
 
-    # TODO: call predict once it has been implemented
-    # yhat_internal = MLJBase.predict(mach_rep, X)
+    yhat_internal = MLJBase.predict(mach_rep, X)
 
     # Now refit a fresh machine using the same best seed and model, and compare predictions
     best_model = deepcopy(rep.best_model)
@@ -41,9 +44,15 @@ using Random
 
     @test loss == loss_best
 
-    # yhat_refit = MLJBase.predict(mach_best, X)
+    # Refit on full data to match the RepeatedModel's refit behaviour
+    fit!(mach_best, verbosity=0)
+    yhat_refit = MLJBase.predict(mach_best, X)
 
-    # @test yhat_internal == yhat_refit
+    # Compare probabilities
+    classes_ref = MLJBase.classes(yhat_internal[1])
+    for c in classes_ref
+        @test MLJBase.pdf.(yhat_internal, c) ≈ MLJBase.pdf.(yhat_refit, c)
+    end
 end
 
 # ==============================================================================
@@ -339,13 +348,20 @@ end
     @testset "aggregation validation" begin
         base_model = DecisionTreeClassifier(rng=42)
 
-        # Valid aggregation values
-        for agg in [:mean, :median, :mode, :vote]
+        # Valid aggregation values (excluding :median which is reset for probabilistic)
+        for agg in [:mean, :mode, :vote]
             repeated = RepeatedModel(
                 base_model, aggregation=agg, measure=Accuracy(), refit=false
             )
             @test repeated.aggregation == agg
         end
+
+        # :median is valid for deterministic models
+        reg_model = DecisionTreeRegressor(rng=42)
+        repeated_det = RepeatedModel(
+            reg_model, aggregation=:median, measure=LPLoss(), refit=false
+        )
+        @test repeated_det.aggregation == :median
 
         # Invalid aggregation should be corrected with warning
         repeated = @test_logs (:warn, r"aggregation.*Resetting to :mean") RepeatedModel(
@@ -656,6 +672,53 @@ end
 end
 
 # ==============================================================================
+# Feature Importances Integration Tests
+# ==============================================================================
+
+@testset "Feature Importances Integration Tests" begin
+    X, y = MLJBase.@load_iris
+
+    @testset "feature_importances return_mode=:best" begin
+        base_model = RandomForestClassifier(rng=42, n_trees=5)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:best,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        fi = MLJModelInterface.feature_importances(repeated, mach.fitresult, report(mach))
+        @test fi isa AbstractVector
+        @test length(fi) > 0
+        @test all(x -> x isa Pair, fi)
+    end
+
+    @testset "feature_importances return_mode=:all" begin
+        base_model = RandomForestClassifier(rng=42, n_trees=5)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:all,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        fi = MLJModelInterface.feature_importances(repeated, mach.fitresult, report(mach))
+        @test fi isa Vector
+        @test length(fi) == 3
+        @test all(x -> x isa AbstractVector, fi)
+        @test all(x -> all(p -> p isa Pair, x), fi)
+    end
+end
+
+# ==============================================================================
 # RepeatedFitResult Constructor Tests
 # ==============================================================================
 
@@ -756,5 +819,619 @@ end
         @test_throws ErrorException result.inner_fitresult = [4, 5, 6]
         @test_throws ErrorException result.seeds = [400, 500, 600]
         @test_throws ErrorException result.best_index = 3
+    end
+end
+
+# ==============================================================================
+# Aggregation Helper Tests
+# ==============================================================================
+
+@testset "Aggregation Helper Tests" begin
+    @testset "vote_majority!" begin
+        # Basic majority vote
+        preds = [[:a, :b, :a], [:a, :a, :b], [:b, :a, :a]]
+        out = similar(preds[1])
+        result = RepeatedRestarts.vote_majority!(out, preds)
+        @test result[1] == :a  # 2 votes :a vs 1 vote :b
+        @test result[2] == :a  # 2 votes :a vs 1 vote :b
+        @test result[3] == :a  # 2 votes :a vs 1 vote :b
+
+        # Unanimous vote
+        preds_unanimous = [[:x, :y], [:x, :y], [:x, :y]]
+        out2 = similar(preds_unanimous[1])
+        result2 = RepeatedRestarts.vote_majority!(out2, preds_unanimous)
+        @test result2 == [:x, :y]
+    end
+
+    @testset "aggregate_probs" begin
+        # Create two sets of UnivariateFinite predictions
+        classes = MLJBase.categorical(["a", "b", "c"])
+
+        # First prediction set: high confidence on "a"
+        P1 = [0.8 0.1 0.1; 0.1 0.8 0.1]
+        uf1 = MLJBase.UnivariateFinite(classes, P1)
+
+        # Second prediction set: high confidence on "b"
+        P2 = [0.2 0.7 0.1; 0.1 0.2 0.7]
+        uf2 = MLJBase.UnivariateFinite(classes, P2)
+
+        result = RepeatedRestarts.aggregate_probs([uf1, uf2])
+
+        # Averaged probabilities should sum to 1.0
+        for i in 1:2
+            probs = [MLJBase.pdf(result[i], c) for c in classes]
+            @test sum(probs) ≈ 1.0
+        end
+
+        # Check specific averaged values
+        @test MLJBase.pdf(result[1], classes[1]) ≈ 0.5  # (0.8 + 0.2) / 2
+        @test MLJBase.pdf(result[1], classes[2]) ≈ 0.4  # (0.1 + 0.7) / 2
+        @test MLJBase.pdf(result[1], classes[3]) ≈ 0.1  # (0.1 + 0.1) / 2
+    end
+end
+
+# ==============================================================================
+# Predict Tests
+# ==============================================================================
+
+@testset "Predict Tests" begin
+    X, y = MLJBase.@load_iris
+
+    @testset "predict return_mode=:best (classifier)" begin
+        base_model = DecisionTreeClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:best,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X)
+        @test length(yhat) == length(y)
+        @test eltype(yhat) <: MLJBase.UnivariateFinite
+    end
+
+    @testset "predict return_mode=:best (regressor)" begin
+        X_reg = (x1=rand(100), x2=rand(100))
+        y_reg = 2 .* X_reg.x1 .+ 3 .* X_reg.x2 .+ 0.1 .* randn(100)
+
+        base_model = DecisionTreeRegressor(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:best,
+            resampling=Holdout(rng=42),
+            measure=LPLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X_reg, y_reg)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X_reg)
+        @test length(yhat) == 100
+        @test eltype(yhat) <: Real
+    end
+
+    @testset "predict return_mode=:all" begin
+        n_repeats = 3
+        base_model = DecisionTreeClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=n_repeats,
+            return_mode=:all,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X)
+        @test yhat isa Vector
+        @test length(yhat) == n_repeats
+        for yh in yhat
+            @test length(yh) == length(y)
+        end
+    end
+
+    @testset "predict return_mode=:aggregate (mean)" begin
+        base_model = DecisionTreeClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:aggregate,
+            aggregation=:mean,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X)
+        @test length(yhat) == length(y)
+        @test eltype(yhat) <: MLJBase.UnivariateFinite
+
+        # All probabilities should sum to 1.0
+        classes = MLJBase.classes(yhat[1])
+        for i in eachindex(yhat)
+            probs = [MLJBase.pdf(yhat[i], c) for c in classes]
+            @test sum(probs) ≈ 1.0
+        end
+    end
+
+    @testset "predict return_mode=:aggregate (vote)" begin
+        base_model = DecisionTreeClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=5,
+            return_mode=:aggregate,
+            aggregation=:vote,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X)
+        @test length(yhat) == length(y)
+        @test eltype(yhat) <: MLJBase.UnivariateFinite
+
+        # Indicator distributions: exactly one class should have prob ≈ 1.0
+        classes = MLJBase.classes(yhat[1])
+        for i in eachindex(yhat)
+            probs = [MLJBase.pdf(yhat[i], c) for c in classes]
+            @test maximum(probs) ≈ 1.0
+            @test count(≈(1.0), probs) == 1
+        end
+    end
+
+    @testset "predict return_mode=:aggregate (mean, regressor)" begin
+        X_reg = (x1=rand(50), x2=rand(50))
+        y_reg = 2 .* X_reg.x1 .+ 3 .* X_reg.x2 .+ 0.1 .* randn(50)
+
+        base_model = DecisionTreeRegressor(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:aggregate,
+            aggregation=:mean,
+            resampling=Holdout(rng=42),
+            measure=LPLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X_reg, y_reg)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X_reg)
+        @test length(yhat) == 50
+        @test eltype(yhat) <: Real
+    end
+
+    @testset "predict return_mode=:aggregate (median, regressor)" begin
+        X_reg = (x1=rand(50), x2=rand(50))
+        y_reg = 2 .* X_reg.x1 .+ 3 .* X_reg.x2 .+ 0.1 .* randn(50)
+
+        base_model = DecisionTreeRegressor(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:aggregate,
+            aggregation=:median,
+            resampling=Holdout(rng=42),
+            measure=LPLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X_reg, y_reg)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X_reg)
+        @test length(yhat) == 50
+        @test eltype(yhat) <: Real
+    end
+
+    @testset "predict reproducibility" begin
+        base_model = DecisionTreeClassifier(rng=42)
+
+        repeated1 = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:best,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach1 = machine(repeated1, X, y)
+        fit!(mach1, verbosity=0)
+        yhat1 = MLJBase.predict(mach1, X)
+
+        repeated2 = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:best,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach2 = machine(repeated2, X, y)
+        fit!(mach2, verbosity=0)
+        yhat2 = MLJBase.predict(mach2, X)
+
+        # Compare probabilities
+        classes_ref = MLJBase.classes(yhat1[1])
+        for c in classes_ref
+            @test MLJBase.pdf.(yhat1, c) ≈ MLJBase.pdf.(yhat2, c)
+        end
+    end
+end
+
+# ==============================================================================
+# Median Validation Tests
+# ==============================================================================
+
+@testset "Median validation for probabilistic models" begin
+    base_model = DecisionTreeClassifier(rng=42)
+
+    # :median on probabilistic model should be reset to :mean with warning
+    repeated = @test_logs(
+        (:warn, r"aggregation=:median is not supported for probabilistic"),
+        RepeatedModel(base_model; aggregation=:median, measure=LogLoss(), refit=false),
+    )
+    @test repeated.aggregation == :mean
+
+    # :median on deterministic model should be fine
+    reg_model = DecisionTreeRegressor(rng=42)
+    repeated_det = RepeatedModel(
+        reg_model; aggregation=:median, measure=LPLoss(), refit=false
+    )
+    @test repeated_det.aggregation == :median
+end
+
+# ==============================================================================
+# Update Tests
+# ==============================================================================
+
+@testset "Update Tests" begin
+    X, y = MLJBase.@load_iris
+
+    @testset "incremental n_repeats increase" begin
+        base_model = DecisionTreeClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        rep_old = report(mach)
+        old_history = deepcopy(rep_old.history)
+        old_seeds = deepcopy(rep_old.seeds)
+        @test length(old_history) == 3
+        @test length(old_seeds) == 3
+
+        # Increase n_repeats — should trigger update, not full refit
+        repeated.n_repeats = 5
+        fit!(mach, verbosity=0)
+
+        rep_new = report(mach)
+        @test length(rep_new.history) == 5
+        @test length(rep_new.seeds) == 5
+
+        # First 3 seeds should match
+        @test rep_new.seeds[1:3] == old_seeds
+
+        # First 3 history entries should match
+        for i in 1:3
+            @test rep_new.history[i].measurement == old_history[i].measurement
+        end
+    end
+
+    @testset "changed random_state exits without refit" begin
+        base_model = DecisionTreeClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        old_seeds = deepcopy(report(mach).seeds)
+
+        # Change random_state and increase n_repeats
+        repeated.random_state = 999
+        repeated.n_repeats = 5
+        @test_logs (:warn, "wrapper.random_state has changed. Exiting update.") fit!(
+            mach, verbosity=0
+        )
+
+        # Seeds should be unchanged (update exited early)
+        @test report(mach).seeds == old_seeds
+        @test length(report(mach).history) == 3
+    end
+
+    @testset "decreased n_repeats exits without refit" begin
+        base_model = DecisionTreeClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=5,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        @test length(report(mach).history) == 5
+
+        # Decrease n_repeats — update exits without refit
+        repeated.n_repeats = 3
+        @test_logs (:warn, "n_repeats decreased or unchanged. Exiting update.") fit!(
+            mach, verbosity=0
+        )
+
+        @test length(report(mach).history) == 5
+    end
+end
+
+# ==============================================================================
+# Acceleration Tests
+# ==============================================================================
+
+@testset "Acceleration Tests" begin
+    X, y = MLJBase.@load_iris
+    base_model = DecisionTreeClassifier(rng=42)
+
+    @testset "CPUThreads produces same result as CPU1" begin
+        # CPU1 baseline
+        repeated_seq = RepeatedModel(
+            base_model;
+            n_repeats=5,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+            acceleration=CPU1(),
+        )
+        mach_seq = machine(repeated_seq, X, y)
+        fit!(mach_seq, verbosity=0)
+        rep_seq = report(mach_seq)
+
+        # CPUThreads
+        repeated_par = RepeatedModel(
+            base_model;
+            n_repeats=5,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+            acceleration=CPUThreads(),
+        )
+        mach_par = machine(repeated_par, X, y)
+        fit!(mach_par, verbosity=0)
+        rep_par = report(mach_par)
+
+        # Same seeds and best selection
+        @test rep_seq.seeds == rep_par.seeds
+        @test rep_seq.best_index == rep_par.best_index
+        @test rep_seq.best_seed == rep_par.best_seed
+
+        # Same predictions
+        yhat_seq = MLJBase.predict(mach_seq, X)
+        yhat_par = MLJBase.predict(mach_par, X)
+        classes_ref = MLJBase.classes(yhat_seq[1])
+        for c in classes_ref
+            @test MLJBase.pdf.(yhat_seq, c) ≈ MLJBase.pdf.(yhat_par, c)
+        end
+    end
+
+    @testset "CPUProcesses produces same result as CPU1" begin
+        # CPU1 baseline
+        repeated_seq = RepeatedModel(
+            base_model;
+            n_repeats=4,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+            acceleration=CPU1(),
+        )
+        mach_seq = machine(repeated_seq, X, y)
+        fit!(mach_seq, verbosity=0)
+        rep_seq = report(mach_seq)
+
+        # CPUProcesses should match CPU1 (falls back to CPU1 if no workers)
+        repeated_par = RepeatedModel(
+            base_model;
+            n_repeats=4,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+            acceleration=CPUProcesses(),
+        )
+        mach_par = machine(repeated_par, X, y)
+        fit!(mach_par, verbosity=0)
+        rep_par = report(mach_par)
+
+        # Same seeds and best selection
+        @test rep_seq.seeds == rep_par.seeds
+        @test rep_seq.best_index == rep_par.best_index
+        @test rep_seq.best_seed == rep_par.best_seed
+
+        # Same predictions
+        yhat_seq = MLJBase.predict(mach_seq, X)
+        yhat_par = MLJBase.predict(mach_par, X)
+        classes_ref = MLJBase.classes(yhat_seq[1])
+        for c in classes_ref
+            @test MLJBase.pdf.(yhat_seq, c) ≈ MLJBase.pdf.(yhat_par, c)
+        end
+    end
+end
+
+# ==============================================================================
+# Unsupervised Transform Tests
+# ==============================================================================
+
+
+@testset "Unsupervised Transform Tests" begin
+    rng = Random.MersenneTwister(42)
+    X = (x1=rand(rng, 50), x2=rand(rng, 50))
+
+    @testset "seeded determinism" begin
+        m1 = KMeansSeeded(k=3, seed=123)
+        m2 = KMeansSeeded(k=3, seed=123)
+        fr1 = MMI.fit(m1, 0, X)[1]
+        fr2 = MMI.fit(m2, 0, X)[1]
+        @test fr1[1] ≈ fr2[1]
+    end
+
+    # Build fitresults manually
+    seeds = [100, 200, 300]
+    fitresults = [
+        let m = KMeansSeeded(k=3, seed=s)
+            MMI.fit(m, 0, X)[1]
+        end for s in seeds
+    ]
+
+    # Verify different seeds produce different centers
+    @test fitresults[1][1] != fitresults[2][1]
+
+    @testset "return_mode=:best" begin
+        base = KMeansSeeded(k=3, seed=42)
+        wrapper = RepeatedModel(
+            base;
+            n_repeats=3,
+            return_mode=:best,
+            measure=LPLoss(),
+            refit=false,
+            rng_field=:seed,
+        )
+        fr = RepeatedRestarts.RepeatedFitResult([fitresults[1]], [seeds[1]], 1)
+        Xt = MMI.transform(wrapper, fr, X)
+        Xt_mat = MLJBase.matrix(Xt)
+        @test Xt_mat isa AbstractMatrix
+        @test size(Xt_mat) == (50, 3)
+    end
+
+    @testset "return_mode=:all" begin
+        base = KMeansSeeded(k=3, seed=42)
+        wrapper = RepeatedModel(
+            base;
+            n_repeats=3,
+            return_mode=:all,
+            measure=LPLoss(),
+            refit=false,
+            rng_field=:seed,
+        )
+        fr = RepeatedRestarts.RepeatedFitResult(fitresults, seeds, 1)
+        Xt = MMI.transform(wrapper, fr, X)
+        @test Xt isa Vector
+        @test length(Xt) == 3
+        Xt_sizes = map(Xt) do t
+            size(MLJBase.matrix(t))
+        end
+        @test all(s == (50, 3) for s in Xt_sizes)
+    end
+
+    @testset "return_mode=:aggregate (unsupported for table)" begin
+        base = KMeansSeeded(k=3, seed=42)
+        wrapper = RepeatedModel(
+            base;
+            n_repeats=3,
+            return_mode=:aggregate,
+            aggregation=:mean,
+            measure=LPLoss(),
+            refit=false,
+            rng_field=:seed,
+        )
+        fr = RepeatedRestarts.RepeatedFitResult(fitresults, seeds, 1)
+        @test_throws ErrorException MMI.transform(wrapper, fr, X)
+    end
+end
+
+# ==============================================================================
+# Aggregate Transforms Unit Tests
+# ==============================================================================
+
+@testset "Aggregate Transforms Tests" begin
+    t1 = [1.0 2.0; 3.0 4.0; 5.0 6.0]
+    t2 = [2.0 4.0; 6.0 8.0; 10.0 12.0]
+    t3 = [3.0 6.0; 9.0 12.0; 15.0 18.0]
+    trans = [t1, t2, t3]
+
+    @testset ":mean aggregation" begin
+        result = RepeatedRestarts.aggregate_transforms(trans, :mean)
+        @test result ≈ [2.0 4.0; 6.0 8.0; 10.0 12.0]
+    end
+
+    @testset ":median aggregation" begin
+        result = RepeatedRestarts.aggregate_transforms(trans, :median)
+        @test result ≈ [2.0 4.0; 6.0 8.0; 10.0 12.0]
+    end
+
+    @testset "error for unsupported aggregation" begin
+        @test_throws ErrorException RepeatedRestarts.aggregate_transforms(trans, :vote)
+        @test_throws ErrorException RepeatedRestarts.aggregate_transforms(trans, :mode)
+    end
+
+    @testset "error for non-numeric output type" begin
+        string_trans = [["a", "b"], ["c", "d"]]
+        @test_throws ErrorException RepeatedRestarts.aggregate_transforms(
+            string_trans, :mean
+        )
+    end
+end
+
+# ==============================================================================
+# Deterministic Aggregation Tests
+# ==============================================================================
+
+@testset "Deterministic Aggregation Tests" begin
+    X_reg = (x1=rand(50), x2=rand(50))
+    y_reg = 2 .* X_reg.x1 .+ 3 .* X_reg.x2 .+ 0.1 .* randn(50)
+
+    @testset "aggregate :vote (regressor)" begin
+        base_model = DecisionTreeRegressor(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:aggregate,
+            aggregation=:vote,
+            resampling=Holdout(rng=42),
+            measure=LPLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X_reg, y_reg)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X_reg)
+        @test length(yhat) == 50
+        @test eltype(yhat) <: Real
+    end
+
+    @testset "aggregate :mode (regressor)" begin
+        base_model = DecisionTreeRegressor(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:aggregate,
+            aggregation=:mode,
+            resampling=Holdout(rng=42),
+            measure=LPLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X_reg, y_reg)
+        fit!(mach, verbosity=0)
+
+        yhat = MLJBase.predict(mach, X_reg)
+        @test length(yhat) == 50
+        @test eltype(yhat) <: Real
     end
 end
