@@ -46,10 +46,8 @@ mutable struct ProbabilisticRepeatedModel{M} <: MMI.Probabilistic
 end
 
 # Union type for all variants
-const RepeatedModel{M} = Union{
-    DeterministicRepeatedModel{M},
-    ProbabilisticRepeatedModel{M},
-} where {M}
+const RepeatedModel{M} =
+    Union{DeterministicRepeatedModel{M},ProbabilisticRepeatedModel{M}} where {M}
 Base.parentmodule(::Type{<:RepeatedModel}) = RepeatedRestarts
 function Base.fieldnames(::Type{<:RepeatedModel})
     (
@@ -234,7 +232,9 @@ function MMI.clean!(wrapper::RepeatedModel)
         wrapper.acceleration_resampling = CPUThreads()
     end
     wrapper.acceleration = MLJBase._process_accel_settings(wrapper.acceleration)
-    wrapper.acceleration_resampling = MLJBase._process_accel_settings(wrapper.acceleration_resampling)
+    wrapper.acceleration_resampling = MLJBase._process_accel_settings(
+        wrapper.acceleration_resampling
+    )
 
     return message
 end
