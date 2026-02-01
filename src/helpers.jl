@@ -206,7 +206,9 @@ function vote_majority!(out, preds_vecs::Vector{<:AbstractVector})
 end
 
 # Averaging of UnivariateFinite vectors
-function aggregate_probs(yhat_vecs::Vector{<:MLJBase.CategoricalDistributions.UnivariateFiniteVector})
+function aggregate_probs(
+    yhat_vecs::Vector{<:MLJBase.CategoricalDistributions.UnivariateFiniteVector}
+)
     first_vec = yhat_vecs[1]
     n = length(first_vec)
     classes = MMI.classes(first_vec[1])
