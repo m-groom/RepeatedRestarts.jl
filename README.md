@@ -1,5 +1,11 @@
 # RepeatedRestarts.jl
 
+[![Code Style: Blue](https://img.shields.io/badge/code%20style-blue-4495d1.svg)](https://github.com/JuliaDiff/BlueStyle)
+[![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+[![CI](https://github.com/m-groom/RepeatedRestarts.jl/actions/workflows/CI.yaml/badge.svg)](https://github.com/m-groom/RepeatedRestarts.jl/actions/workflows/CI.yaml)
+[![Licence](https://img.shields.io/github/license/m-groom/RepeatedRestarts.jl.svg)](https://github.com/m-groom/RepeatedRestarts.jl/blob/main/LICENSE)
+[![Julia](https://img.shields.io/badge/julia-1.9%20%7C%201.10%20%7C%201.11-9558B2.svg)](https://julialang.org)
+
 **RepeatedRestarts.jl** provides a wrapper model for [MLJ](https://github.com/JuliaAI/MLJ.jl) that fits any supervised model multiple times with different random seeds, evaluates each repeat using resampling (or in-sample), and returns either the best result, all results, or an aggregation of the results.
 
 ## Overview
@@ -63,6 +69,6 @@ yhat = predict(mach, X)
 report(mach).best_index
 ```
 
-## License
+## Licence
 
-This software is distributed under the MIT License.
+This software is distributed under the MIT Licence.
