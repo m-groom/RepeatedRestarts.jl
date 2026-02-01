@@ -226,31 +226,3 @@ function aggregate_probs(yhat_vecs::Vector{<:MLJBase.CategoricalDistributions.Un
     P ./= length(yhat_vecs)
     return MMI.UnivariateFinite(classes, P)
 end
-
-# ==============================================================================
-# Transform aggregation
-# ==============================================================================
-
-# Aggregate transform outputs for unsupervised models
-function aggregate_transforms(trans_vecs::Vector, aggregation::Symbol)
-    first_t = trans_vecs[1]
-    if !(first_t isa Number || (first_t isa AbstractArray && eltype(first_t) <: Number))
-        error("Unsupported transform output type: $(eltype(first_t)).")
-    end
-    if aggregation == :mean
-        return mean(trans_vecs)
-    elseif aggregation == :median
-        stacked = cat(
-            [reshape(t, size(t)..., 1) for t in trans_vecs]...; dims=ndims(first_t) + 1
-        )
-        return dropdims(
-            mapslices(Statistics.median, stacked; dims=ndims(first_t) + 1);
-            dims=ndims(first_t) + 1,
-        )
-    else
-        error(
-            "Unsupported aggregation method for transforms: " *
-            "$aggregation. Use :mean or :median.",
-        )
-    end
-end

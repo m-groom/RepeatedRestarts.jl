@@ -8,8 +8,6 @@ using Random
 
 const MMI = MLJModelInterface
 
-include("kmeans.jl")
-
 @testset "Best model refit reproducibility" begin
     # Load data
     X, y = MLJBase.@load_iris
@@ -134,6 +132,10 @@ end
         # Unsupported model type
         struct UnsupportedModel end
         @test_throws ArgumentError RepeatedModel(UnsupportedModel())
+
+        # Unsupervised models are not supported
+        struct DummyUnsupervised <: MMI.Unsupervised end
+        @test_throws ArgumentError RepeatedModel(DummyUnsupervised())
     end
 end
 
@@ -1272,120 +1274,6 @@ end
         for c in classes_ref
             @test MLJBase.pdf.(yhat_seq, c) ≈ MLJBase.pdf.(yhat_par, c)
         end
-    end
-end
-
-# ==============================================================================
-# Unsupervised Transform Tests
-# ==============================================================================
-
-
-@testset "Unsupervised Transform Tests" begin
-    rng = Random.MersenneTwister(42)
-    X = (x1=rand(rng, 50), x2=rand(rng, 50))
-
-    @testset "seeded determinism" begin
-        m1 = KMeansSeeded(k=3, seed=123)
-        m2 = KMeansSeeded(k=3, seed=123)
-        fr1 = MMI.fit(m1, 0, X)[1]
-        fr2 = MMI.fit(m2, 0, X)[1]
-        @test fr1[1] ≈ fr2[1]
-    end
-
-    # Build fitresults manually
-    seeds = [100, 200, 300]
-    fitresults = [
-        let m = KMeansSeeded(k=3, seed=s)
-            MMI.fit(m, 0, X)[1]
-        end for s in seeds
-    ]
-
-    # Verify different seeds produce different centers
-    @test fitresults[1][1] != fitresults[2][1]
-
-    @testset "return_mode=:best" begin
-        base = KMeansSeeded(k=3, seed=42)
-        wrapper = RepeatedModel(
-            base;
-            n_repeats=3,
-            return_mode=:best,
-            measure=LPLoss(),
-            refit=false,
-            rng_field=:seed,
-        )
-        fr = RepeatedRestarts.RepeatedFitResult([fitresults[1]], [seeds[1]], 1)
-        Xt = MMI.transform(wrapper, fr, X)
-        Xt_mat = MLJBase.matrix(Xt)
-        @test Xt_mat isa AbstractMatrix
-        @test size(Xt_mat) == (50, 3)
-    end
-
-    @testset "return_mode=:all" begin
-        base = KMeansSeeded(k=3, seed=42)
-        wrapper = RepeatedModel(
-            base;
-            n_repeats=3,
-            return_mode=:all,
-            measure=LPLoss(),
-            refit=false,
-            rng_field=:seed,
-        )
-        fr = RepeatedRestarts.RepeatedFitResult(fitresults, seeds, 1)
-        Xt = MMI.transform(wrapper, fr, X)
-        @test Xt isa Vector
-        @test length(Xt) == 3
-        Xt_sizes = map(Xt) do t
-            size(MLJBase.matrix(t))
-        end
-        @test all(s == (50, 3) for s in Xt_sizes)
-    end
-
-    @testset "return_mode=:aggregate (unsupported for table)" begin
-        base = KMeansSeeded(k=3, seed=42)
-        wrapper = RepeatedModel(
-            base;
-            n_repeats=3,
-            return_mode=:aggregate,
-            aggregation=:mean,
-            measure=LPLoss(),
-            refit=false,
-            rng_field=:seed,
-        )
-        fr = RepeatedRestarts.RepeatedFitResult(fitresults, seeds, 1)
-        @test_throws ErrorException MMI.transform(wrapper, fr, X)
-    end
-end
-
-# ==============================================================================
-# Aggregate Transforms Unit Tests
-# ==============================================================================
-
-@testset "Aggregate Transforms Tests" begin
-    t1 = [1.0 2.0; 3.0 4.0; 5.0 6.0]
-    t2 = [2.0 4.0; 6.0 8.0; 10.0 12.0]
-    t3 = [3.0 6.0; 9.0 12.0; 15.0 18.0]
-    trans = [t1, t2, t3]
-
-    @testset ":mean aggregation" begin
-        result = RepeatedRestarts.aggregate_transforms(trans, :mean)
-        @test result ≈ [2.0 4.0; 6.0 8.0; 10.0 12.0]
-    end
-
-    @testset ":median aggregation" begin
-        result = RepeatedRestarts.aggregate_transforms(trans, :median)
-        @test result ≈ [2.0 4.0; 6.0 8.0; 10.0 12.0]
-    end
-
-    @testset "error for unsupported aggregation" begin
-        @test_throws ErrorException RepeatedRestarts.aggregate_transforms(trans, :vote)
-        @test_throws ErrorException RepeatedRestarts.aggregate_transforms(trans, :mode)
-    end
-
-    @testset "error for non-numeric output type" begin
-        string_trans = [["a", "b"], ["c", "d"]]
-        @test_throws ErrorException RepeatedRestarts.aggregate_transforms(
-            string_trans, :mean
-        )
     end
 end
 

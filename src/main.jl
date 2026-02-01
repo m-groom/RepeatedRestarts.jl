@@ -45,32 +45,10 @@ mutable struct ProbabilisticRepeatedModel{M} <: MMI.Probabilistic
     random_state::Union{AbstractRNG,Integer}
 end
 
-mutable struct UnsupervisedRepeatedModel{M} <: MMI.Unsupervised
-    model::M
-    rng_field::Union{Symbol,Expr,String}
-    n_repeats::Int
-    resampling
-    measure
-    weights::Union{Nothing,AbstractVector{<:Real}}
-    class_weights::Union{Nothing,AbstractDict}
-    operation
-    selection_heuristic::MLJTuning.SelectionHeuristic
-    return_mode::Symbol
-    aggregation::Symbol
-    refit::Bool
-    acceleration::AbstractResource
-    acceleration_resampling::AbstractResource
-    check_measure::Bool
-    cache::Bool
-    compact_history::Bool
-    random_state::Union{AbstractRNG,Integer}
-end
-
 # Union type for all variants
 const RepeatedModel{M} = Union{
     DeterministicRepeatedModel{M},
     ProbabilisticRepeatedModel{M},
-    UnsupervisedRepeatedModel{M},
 } where {M}
 Base.parentmodule(::Type{<:RepeatedModel}) = RepeatedRestarts
 function Base.fieldnames(::Type{<:RepeatedModel})
@@ -163,7 +141,12 @@ function RepeatedModel(
     elseif atom isa MMI.Probabilistic
         wrapper = ProbabilisticRepeatedModel{M}(_args...)
     elseif atom isa MMI.Unsupervised
-        wrapper = UnsupervisedRepeatedModel{M}(_args...)
+        throw(
+            ArgumentError(
+                "Unsupervised models are not supported by RepeatedRestarts. " *
+                "Provide a supervised model and a target `y`.",
+            ),
+        )
     else
         throw(
             ArgumentError(
@@ -473,30 +456,8 @@ function MMI.update(
 end
 
 # ==============================================================================
-# Transform and Predict Methods
+# Predict Methods
 # ==============================================================================
-
-function MMI.transform(
-    wrapper::UnsupervisedRepeatedModel, fitresult::RepeatedFitResult, args...
-)
-    # Reformat data for the inner model
-    reformatted_args = MMI.reformat(wrapper.model, args...)
-
-    if wrapper.return_mode == :best
-        return MMI.transform(wrapper.model, fitresult.inner_fitresult[1], reformatted_args...)
-    end
-
-    transforms = [
-        MMI.transform(wrapper.model, fitresult.inner_fitresult[i], reformatted_args...) for
-        i in eachindex(fitresult.inner_fitresult)
-    ]
-
-    if wrapper.return_mode == :all
-        return transforms
-    else  # :aggregate
-        return aggregate_transforms(transforms, wrapper.aggregation)
-    end
-end
 
 # Common implementation for predict - supervised models only
 function MMI.predict(
@@ -562,11 +523,11 @@ end
 """
 $(MMI.doc_header(RepeatedModel))
 
-Wraps any MLJ model to train it multiple times with different random seeds,
+Wraps any supervised MLJ model to train it multiple times with different random seeds,
 evaluating each repeat with a resampling strategy (or in-sample) and
 selecting the best result according to a selection heuristic.  This is
 useful for models whose performance depends on random initialisation, such
-as neural networks, clustering algorithms, or decision trees.
+as neural networks or decision trees. Unsupervised models are not supported.
 
 # Training data
 
@@ -585,8 +546,6 @@ where
   scitype is compatible with the wrapped model; check the scitype with
   `scitype(y)` and model-compatible scitypes with
   `target_scitype(repeated_model.model)`
-
-For unsupervised wrapped models, omit `y`.
 
 Train the machine with `fit!(mach, rows=...)`.
 
@@ -626,16 +585,15 @@ Train the machine with `fit!(mach, rows=...)`.
 - `selection_heuristic::MLJTuning.SelectionHeuristic = NaiveSelection()`:
   Heuristic used to select the best repeat from the evaluation history.
 
-- `return_mode::Symbol = :best`: Controls what `predict` / `transform`
-  return.  One of:
+- `return_mode::Symbol = :best`: Controls what `predict` returns. One of:
   - `:best` — use only the best repeat's fitresult.
-  - `:all`  — return a vector of predictions/transforms, one per repeat.
-  - `:aggregate` — aggregate predictions/transforms across all repeats
+  - `:all`  — return a vector of predictions, one per repeat.
+  - `:aggregate` — aggregate predictions across all repeats
     according to `aggregation`.
 
 - `aggregation::Symbol = :mean`: Aggregation method when
-  `return_mode = :aggregate`.  One of `:mean`, `:median` (deterministic
-  and unsupervised only), `:mode`, or `:vote`.
+  `return_mode = :aggregate`. One of `:mean`, `:median` (deterministic
+  only), `:mode`, or `:vote`.
 
 - `refit::Bool = true`: Whether to refit the selected model(s) on the
   full training data after selection.  Automatically set to `false` when
@@ -670,9 +628,6 @@ Train the machine with `fit!(mach, rows=...)`.
   - `:best` — a single prediction vector from the best repeat.
   - `:all`  — a vector of prediction vectors, one per repeat.
   - `:aggregate` — a single prediction vector aggregated across repeats.
-
-- `transform(mach, Xnew)`: For unsupervised wrapped models, transform `Xnew`.
-  Output depends on `return_mode` in the same way as `predict`.
 
 
 # Fitted parameters
