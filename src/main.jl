@@ -500,7 +500,9 @@ function MMI.predict(
     else  # :aggregate
         aggregated = aggregate_predictions(preds, wrapper.aggregation, wrapper)
         if inner_reports_predict
-            wrapper_report = (predict_reports=predict_reports, aggregation=wrapper.aggregation)
+            wrapper_report = (
+                predict_reports=predict_reports, aggregation=wrapper.aggregation
+            )
             return aggregated, wrapper_report
         else
             return aggregated
