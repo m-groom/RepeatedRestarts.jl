@@ -1323,3 +1323,236 @@ end
         @test eltype(yhat) <: Real
     end
 end
+
+# ==============================================================================
+# Reporting Predict Tests
+# ==============================================================================
+
+# A dummy probabilistic classifier that reports on predict
+mutable struct ReportingClassifier <: MMI.Probabilistic
+    rng::Int
+end
+ReportingClassifier(; rng=42) = ReportingClassifier(rng)
+
+MMI.reporting_operations(::Type{<:ReportingClassifier}) = (:predict,)
+
+function MMI.fit(model::ReportingClassifier, verbosity::Int, X, y)
+    classes = MMI.classes(y[1])
+    rng_state = model.rng
+    fitresult = (classes=classes, rng_state=rng_state)
+    cache = nothing
+    report = (n_classes=length(classes),)
+    return fitresult, cache, report
+end
+
+function MMI.predict(model::ReportingClassifier, fitresult, X)
+    classes = fitresult.classes
+    n = MMI.nrows(X)
+    L = length(classes)
+    rng = Random.Xoshiro(fitresult.rng_state)
+    P = rand(rng, n, L)
+    P ./= sum(P; dims=2)
+    predictions = MMI.UnivariateFinite(classes, P)
+    predict_report = (seed_used=fitresult.rng_state, n_predictions=n)
+    return predictions, predict_report
+end
+
+MMI.input_scitype(::Type{<:ReportingClassifier}) = MMI.Table(MMI.Continuous)
+MMI.target_scitype(::Type{<:ReportingClassifier}) = AbstractVector{<:MMI.Finite}
+
+@testset "Reporting Predict Tests" begin
+    X, y = MLJBase.@load_iris
+
+    @testset "wrapper inherits reporting_operations" begin
+        base_model = ReportingClassifier(rng=42)
+        repeated = RepeatedModel(base_model, n_repeats=3, measure=LogLoss(), refit=false)
+
+        wrapper_ops = MMI.reporting_operations(typeof(repeated))
+        base_ops = MMI.reporting_operations(typeof(base_model))
+        @test wrapper_ops == base_ops
+        @test :predict in wrapper_ops
+    end
+
+    @testset "return_mode=:best with reporting model" begin
+        base_model = ReportingClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=3,
+            return_mode=:best,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        # Machine-level predict should return only predictions
+        yhat = MLJBase.predict(mach, X)
+        @test length(yhat) == length(y)
+        @test eltype(yhat) <: MLJBase.UnivariateFinite
+
+        # Report should contain the predict_report fields (merged flat by MLJ)
+        rep = report(mach)
+        @test haskey(rep, :seed_used)
+        @test haskey(rep, :n_predictions)
+        @test rep.n_predictions == length(y)
+    end
+
+    @testset "return_mode=:all with reporting model" begin
+        n_repeats = 3
+        base_model = ReportingClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=n_repeats,
+            return_mode=:all,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        # Machine-level predict should return vector of predictions
+        yhat = MLJBase.predict(mach, X)
+        @test yhat isa Vector
+        @test length(yhat) == n_repeats
+        for yh in yhat
+            @test length(yh) == length(y)
+            @test eltype(yh) <: MLJBase.UnivariateFinite
+        end
+
+        # Report should contain predict_reports for all repeats (merged flat by MLJ)
+        rep = report(mach)
+        @test haskey(rep, :predict_reports)
+        @test length(rep.predict_reports) == n_repeats
+        for pr in rep.predict_reports
+            @test haskey(pr, :seed_used)
+            @test haskey(pr, :n_predictions)
+            @test pr.n_predictions == length(y)
+        end
+    end
+
+    @testset "return_mode=:aggregate with reporting model" begin
+        n_repeats = 3
+        base_model = ReportingClassifier(rng=42)
+        repeated = RepeatedModel(
+            base_model;
+            n_repeats=n_repeats,
+            return_mode=:aggregate,
+            aggregation=:mean,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach = machine(repeated, X, y)
+        fit!(mach, verbosity=0)
+
+        # Machine-level predict should return aggregated predictions
+        yhat = MLJBase.predict(mach, X)
+        @test length(yhat) == length(y)
+        @test eltype(yhat) <: MLJBase.UnivariateFinite
+
+        # Probabilities should sum to 1.0
+        classes = MLJBase.classes(yhat[1])
+        for i in eachindex(yhat)
+            probs = [MLJBase.pdf(yhat[i], c) for c in classes]
+            @test sum(probs) ≈ 1.0
+        end
+
+        # Report should contain predict_reports and aggregation info (merged flat by MLJ)
+        rep = report(mach)
+        @test haskey(rep, :predict_reports)
+        @test haskey(rep, :aggregation)
+        @test rep.aggregation == :mean
+        @test length(rep.predict_reports) == n_repeats
+    end
+
+    @testset "low-level MMI.predict with reporting model" begin
+        n_repeats = 3
+        base_model = ReportingClassifier(rng=42)
+
+        # Test :all mode at low level
+        repeated_all = RepeatedModel(
+            base_model;
+            n_repeats=n_repeats,
+            return_mode=:all,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach_all = machine(repeated_all, X, y)
+        fit!(mach_all, verbosity=0)
+
+        # Low-level predict should return (predictions, wrapper_report)
+        result = MMI.predict(repeated_all, mach_all.fitresult, X)
+        @test result isa Tuple
+        @test length(result) == 2
+        preds, wrapper_report = result
+        @test preds isa Vector
+        @test length(preds) == n_repeats
+        @test haskey(wrapper_report, :predict_reports)
+
+        # Test :aggregate mode at low level
+        repeated_agg = RepeatedModel(
+            base_model;
+            n_repeats=n_repeats,
+            return_mode=:aggregate,
+            aggregation=:mean,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach_agg = machine(repeated_agg, X, y)
+        fit!(mach_agg, verbosity=0)
+
+        result_agg = MMI.predict(repeated_agg, mach_agg.fitresult, X)
+        @test result_agg isa Tuple
+        @test length(result_agg) == 2
+        preds_agg, wrapper_report_agg = result_agg
+        @test length(preds_agg) == length(y)
+        @test haskey(wrapper_report_agg, :predict_reports)
+        @test haskey(wrapper_report_agg, :aggregation)
+    end
+
+    @testset "non-reporting model unchanged behaviour" begin
+        # DecisionTreeClassifier does not report on predict
+        base_model = DecisionTreeClassifier(rng=42)
+        @test !(:predict in MMI.reporting_operations(typeof(base_model)))
+
+        n_repeats = 3
+
+        # :all mode should return plain vector of predictions
+        repeated_all = RepeatedModel(
+            base_model;
+            n_repeats=n_repeats,
+            return_mode=:all,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach_all = machine(repeated_all, X, y)
+        fit!(mach_all, verbosity=0)
+
+        result_all = MMI.predict(repeated_all, mach_all.fitresult, X)
+        @test result_all isa Vector
+        @test !(result_all isa Tuple)
+        @test length(result_all) == n_repeats
+
+        # :aggregate mode should return plain aggregated predictions
+        repeated_agg = RepeatedModel(
+            base_model;
+            n_repeats=n_repeats,
+            return_mode=:aggregate,
+            aggregation=:mean,
+            resampling=Holdout(rng=42),
+            measure=LogLoss(),
+            random_state=101,
+        )
+        mach_agg = machine(repeated_agg, X, y)
+        fit!(mach_agg, verbosity=0)
+
+        result_agg = MMI.predict(repeated_agg, mach_agg.fitresult, X)
+        @test !(result_agg isa Tuple)
+        @test length(result_agg) == length(y)
+    end
+end
