@@ -468,20 +468,43 @@ function MMI.predict(
     # Reformat data for the inner model
     reformatted_args = MMI.reformat(wrapper.model, args...)
 
+    # Check if inner model reports on :predict
+    inner_reports_predict = :predict in MMI.reporting_operations(typeof(wrapper.model))
+
     if wrapper.return_mode == :best
         return MMI.predict(wrapper.model, fitresult.inner_fitresult[1], reformatted_args...)
     end
 
-    # Collect predictions from all inner fitresults
-    preds = [
+    # Collect raw returns from all inner fitresults
+    raw_returns = [
         MMI.predict(wrapper.model, fitresult.inner_fitresult[i], reformatted_args...) for
         i in eachindex(fitresult.inner_fitresult)
     ]
 
+    # Split predictions and reports if inner model reports on :predict
+    if inner_reports_predict
+        preds = [first(r) for r in raw_returns]
+        predict_reports = [last(r) for r in raw_returns]
+    else
+        preds = raw_returns
+        predict_reports = nothing
+    end
+
     if wrapper.return_mode == :all
-        return preds
+        if inner_reports_predict
+            wrapper_report = (predict_reports=predict_reports,)
+            return preds, wrapper_report
+        else
+            return preds
+        end
     else  # :aggregate
-        return aggregate_predictions(preds, wrapper.aggregation, wrapper)
+        aggregated = aggregate_predictions(preds, wrapper.aggregation, wrapper)
+        if inner_reports_predict
+            wrapper_report = (predict_reports=predict_reports, aggregation=wrapper.aggregation)
+            return aggregated, wrapper_report
+        else
+            return aggregated
+        end
     end
 end
 
@@ -629,6 +652,10 @@ Train the machine with `fit!(mach, rows=...)`.
   - `:all`  — a vector of prediction vectors, one per repeat.
   - `:aggregate` — a single prediction vector aggregated across repeats.
 
+  If the wrapped model reports on `:predict` (i.e., `:predict in reporting_operations(model)`),
+  the wrapper correctly unpacks the inner `(prediction, report)` tuples, aggregates only
+  the predictions, and returns a combined report via `report(mach)`.
+
 
 # Fitted parameters
 
@@ -661,6 +688,16 @@ The fields of `report(mach)` are:
 
 - `inner_report`: Report from the inner model.  A single NamedTuple when
   `return_mode = :best`, or a vector of NamedTuples otherwise.
+
+When the wrapped model reports on `:predict` (via `reporting_operations`), the following
+additional fields appear in `report(mach)` after calling `predict`:
+
+- `seed_used`, `n_predictions`, etc.: Fields from the inner model's predict report
+  (for `return_mode = :best`).
+
+- `predict_reports`: A vector of per-repeat predict reports (for `return_mode ∈ {:all, :aggregate}`).
+
+- `aggregation`: The aggregation method used (for `return_mode = :aggregate` only).
 
 
 # Examples
