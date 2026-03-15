@@ -1151,9 +1151,9 @@ end
         # Change random_state and increase n_repeats
         repeated.random_state = 999
         repeated.n_repeats = 5
-        @test_logs (
-            :warn, "wrapper.random_state has changed. Falling back to full refit."
-        ) match_mode=:any fit!(mach, verbosity=1)
+        @test_logs (:warn, "wrapper.random_state has changed. Falling back to full refit.") match_mode=:any fit!(
+            mach, verbosity=1
+        )
 
         @test length(report(mach).history) == 5
         @test length(report(mach).seeds) == 5
@@ -1175,9 +1175,9 @@ end
 
         # Decrease n_repeats — update falls back to a full refit
         repeated.n_repeats = 3
-        @test_logs (
-            :warn, "n_repeats decreased or unchanged. Falling back to full refit."
-        ) match_mode=:any fit!(mach, verbosity=1)
+        @test_logs (:warn, "n_repeats decreased or unchanged. Falling back to full refit.") match_mode=:any fit!(
+            mach, verbosity=1
+        )
 
         @test length(report(mach).history) == 3
         @test length(report(mach).seeds) == 3

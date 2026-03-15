@@ -409,7 +409,8 @@ function MMI.update(
 
     # Fall back to a full refit when incremental append is not applicable.
     if new_n <= old_n
-        verbosity > 0 && @warn "n_repeats decreased or unchanged. Falling back to full refit."
+        verbosity > 0 &&
+            @warn "n_repeats decreased or unchanged. Falling back to full refit."
         return MMI.fit(wrapper, verbosity, args...)
     end
 
@@ -421,7 +422,8 @@ function MMI.update(
     # Fall back to a full refit if the seed sequence is no longer compatible
     # with appending only new repeats.
     if all_seeds[1:old_n] != old_cache.seeds
-        verbosity > 0 && @warn "wrapper.random_state has changed. Falling back to full refit."
+        verbosity > 0 &&
+            @warn "wrapper.random_state has changed. Falling back to full refit."
         return MMI.fit(wrapper, verbosity, args...)
     end
 
