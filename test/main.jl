@@ -1136,7 +1136,7 @@ end
         end
     end
 
-    @testset "changed random_state exits without refit" begin
+    @testset "changed random_state falls back to full refit" begin
         base_model = DecisionTreeClassifier(rng=42)
         repeated = RepeatedModel(
             base_model;
@@ -1148,21 +1148,18 @@ end
         mach = machine(repeated, X, y)
         fit!(mach, verbosity=0)
 
-        old_seeds = deepcopy(report(mach).seeds)
-
         # Change random_state and increase n_repeats
         repeated.random_state = 999
         repeated.n_repeats = 5
-        @test_logs (:warn, "wrapper.random_state has changed. Exiting update.") fit!(
-            mach, verbosity=0
-        )
+        @test_logs (
+            :warn, "wrapper.random_state has changed. Falling back to full refit."
+        ) match_mode=:any fit!(mach, verbosity=1)
 
-        # Seeds should be unchanged (update exited early)
-        @test report(mach).seeds == old_seeds
-        @test length(report(mach).history) == 3
+        @test length(report(mach).history) == 5
+        @test length(report(mach).seeds) == 5
     end
 
-    @testset "decreased n_repeats exits without refit" begin
+    @testset "decreased n_repeats falls back to full refit" begin
         base_model = DecisionTreeClassifier(rng=42)
         repeated = RepeatedModel(
             base_model;
@@ -1176,13 +1173,14 @@ end
 
         @test length(report(mach).history) == 5
 
-        # Decrease n_repeats — update exits without refit
+        # Decrease n_repeats — update falls back to a full refit
         repeated.n_repeats = 3
-        @test_logs (:warn, "n_repeats decreased or unchanged. Exiting update.") fit!(
-            mach, verbosity=0
-        )
+        @test_logs (
+            :warn, "n_repeats decreased or unchanged. Falling back to full refit."
+        ) match_mode=:any fit!(mach, verbosity=1)
 
-        @test length(report(mach).history) == 5
+        @test length(report(mach).history) == 3
+        @test length(report(mach).seeds) == 3
     end
 end
 

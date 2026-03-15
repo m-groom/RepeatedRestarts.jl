@@ -407,10 +407,10 @@ function MMI.update(
     old_n = length(old_cache.seeds)
     new_n = wrapper.n_repeats
 
-    # If n_repeats decreased or unchanged, exit
+    # Fall back to a full refit when incremental append is not applicable.
     if new_n <= old_n
-        @warn "n_repeats decreased or unchanged. Exiting update."
-        return fitresult, old_cache, extract_report_from_cache(old_cache)
+        verbosity > 0 && @warn "n_repeats decreased or unchanged. Falling back to full refit."
+        return MMI.fit(wrapper, verbosity, args...)
     end
 
     # Generate the full seed sequence deterministically
@@ -418,10 +418,11 @@ function MMI.update(
     all_seeds = rand(rng, 1:typemax(Int32), new_n)
     path = to_path(wrapper.rng_field)
 
-    # Verify old seeds match (same random_state)
+    # Fall back to a full refit if the seed sequence is no longer compatible
+    # with appending only new repeats.
     if all_seeds[1:old_n] != old_cache.seeds
-        @warn "wrapper.random_state has changed. Exiting update."
-        return fitresult, old_cache, extract_report_from_cache(old_cache)
+        verbosity > 0 && @warn "wrapper.random_state has changed. Falling back to full refit."
+        return MMI.fit(wrapper, verbosity, args...)
     end
 
     # --- Evaluate only new seeds ---
