@@ -211,8 +211,7 @@ function aggregate_prediction_vector(
 )
     n = length(preds_vecs[1])
     for preds in preds_vecs
-        length(preds) == n ||
-            error("Cannot aggregate predictions with mismatched lengths.")
+        length(preds) == n || error("Cannot aggregate predictions with mismatched lengths.")
     end
 
     if aggregation == :mean
@@ -256,15 +255,15 @@ function aggregate_table_predictions(preds_tables::Vector, aggregation::Symbol)
 
     first_cols = Tables.columns(first_pred)
     names = Tuple(Tables.columnnames(first_cols))
-    isempty(names) && _table_aggregation_error("received a prediction table with no columns.")
+    isempty(names) &&
+        _table_aggregation_error("received a prediction table with no columns.")
 
     reference_columns = [Tables.getcolumn(first_cols, name) for name in names]
     n = length(reference_columns[1])
     for col in reference_columns
-        length(col) == n ||
-            _table_aggregation_error(
-                "the reference prediction has inconsistent column lengths.",
-            )
+        length(col) == n || _table_aggregation_error(
+            "the reference prediction has inconsistent column lengths."
+        )
     end
 
     all_columns = Vector{Any}(undef, length(preds_tables))
@@ -272,19 +271,17 @@ function aggregate_table_predictions(preds_tables::Vector, aggregation::Symbol)
 
     for i in 2:length(preds_tables)
         pred = preds_tables[i]
-        Tables.istable(pred) ||
-            _table_aggregation_error(
-                "repeat $i returned a non-table prediction while other repeats returned tables.",
-            )
+        Tables.istable(pred) || _table_aggregation_error(
+            "repeat $i returned a non-table prediction while other repeats returned tables.",
+        )
         cols = Tables.columns(pred)
         Tuple(Tables.columnnames(cols)) == names ||
             _table_aggregation_error("repeat $i returned different column names or order.")
         current_columns = [Tables.getcolumn(cols, name) for name in names]
         for col in current_columns
-            length(col) == n ||
-                _table_aggregation_error(
-                    "repeat $i returned a different number of rows from the reference prediction.",
-                )
+            length(col) == n || _table_aggregation_error(
+                "repeat $i returned a different number of rows from the reference prediction.",
+            )
         end
         all_columns[i] = current_columns
     end
@@ -293,7 +290,9 @@ function aggregate_table_predictions(preds_tables::Vector, aggregation::Symbol)
     for (j, name) in enumerate(names)
         column_predictions = [cols[j] for cols in all_columns]
         try
-            aggregated_values[j] = aggregate_prediction_vector(column_predictions, aggregation)
+            aggregated_values[j] = aggregate_prediction_vector(
+                column_predictions, aggregation
+            )
         catch err
             if aggregation in (:mean, :median)
                 error(

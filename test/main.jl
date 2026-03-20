@@ -95,19 +95,18 @@ function _manual_aggregate_tables(predictions::Vector, aggregation::Symbol)
 
     for (j, name) in enumerate(names)
         vectors = [Tables.getcolumn(Tables.columns(pred), name) for pred in predictions]
-        aggregated[j] =
-            if aggregation == :mean
-                mean(vectors)
-            elseif aggregation == :median
-                [
-                    Statistics.median([vectors[k][i] for k in eachindex(vectors)]) for
-                    i in eachindex(vectors[1])
-                ]
-            elseif aggregation in (:mode, :vote)
-                _manual_vote(vectors)
-            else
-                error("Unsupported test aggregation: $aggregation")
-            end
+        aggregated[j] = if aggregation == :mean
+            mean(vectors)
+        elseif aggregation == :median
+            [
+                Statistics.median([vectors[k][i] for k in eachindex(vectors)]) for
+                i in eachindex(vectors[1])
+            ]
+        elseif aggregation in (:mode, :vote)
+            _manual_vote(vectors)
+        else
+            error("Unsupported test aggregation: $aggregation")
+        end
     end
 
     return NamedTuple{names}(Tuple(aggregated))
@@ -1151,7 +1150,9 @@ end
     end
 
     @testset "predict return_mode=:aggregate (table-valued deterministic predictions)" begin
-        X_table = (x1=collect(range(0.0, 1.0; length=6)), x2=collect(range(2.0, 3.0; length=6)))
+        X_table = (
+            x1=collect(range(0.0, 1.0; length=6)), x2=collect(range(2.0, 3.0; length=6))
+        )
         y_table = (y1=fill(0.0, 6), y2=fill(1.0, 6))
 
         for aggregation in (:mean, :median, :mode, :vote)
