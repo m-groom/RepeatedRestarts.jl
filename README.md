@@ -18,7 +18,7 @@
 - **Evaluation**: Any MLJ `ResamplingStrategy` is supported (e.g., `Holdout`, `CV`) and can be specified via `resampling`. When set to `InSample()`, each repeat is evaluated on the training data directly. Setting `refit` to `true` will refit the best model(s), according to the specified `measure`, on the full training data.
 - **Incremental updates**: Increasing `n_repeats` on an already-fitted machine triggers an update that evaluates only the new seeds.
 - **Parallelism**: The outer seed-evaluation loop can be parallelised using `acceleration` (e.g., `CPUThreads()` for multi-threaded or `CPUProcesses()` for multi-process parallelism). The resampling evaluation can be parallelised using `acceleration_resampling`.
-- **Prediction modes**: `return_mode` controls what `predict` returns: `:best` (best repeat only), `:all` (one prediction per repeat), or `:aggregate` (aggregate across repeats using `aggregation` = `:mean`, `:median` (deterministic only), `:mode`, or `:vote`).
+- **Prediction modes**: `return_mode` controls what `predict` returns: `:best` (best repeat only), `:all` (one prediction per repeat), or `:aggregate` (aggregate across repeats using `aggregation` = `:mean`, `:median` (deterministic only), `:mode`, or `:vote`). Deterministic table-valued predictions are aggregated column-wise.
 
 
 ## Installation

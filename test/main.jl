@@ -5,8 +5,121 @@ using MLJModelInterface
 using MLJDecisionTreeInterface
 using StatisticalMeasures
 using Random
+using Statistics
+using Tables
 
 const MMI = MLJModelInterface
+
+mutable struct DummyTableRegressor <: MMI.Deterministic
+    rng::Int
+end
+DummyTableRegressor(; rng=42) = DummyTableRegressor(rng)
+
+mutable struct ReportingTableRegressor <: MMI.Deterministic
+    rng::Int
+end
+ReportingTableRegressor(; rng=42) = ReportingTableRegressor(rng)
+
+MMI.input_scitype(::Type{<:DummyTableRegressor}) = MMI.Table(MMI.Continuous)
+MMI.target_scitype(::Type{<:DummyTableRegressor}) = MMI.Table(MMI.Continuous)
+MMI.input_scitype(::Type{<:ReportingTableRegressor}) = MMI.Table(MMI.Continuous)
+MMI.target_scitype(::Type{<:ReportingTableRegressor}) = MMI.Table(MMI.Continuous)
+MMI.reporting_operations(::Type{<:ReportingTableRegressor}) = (:predict,)
+
+function _dummy_table_predictions(fitresult, X)
+    cols = Tables.columns(X)
+    names = Tables.columnnames(cols)
+    x1 = collect(Float64, Tables.getcolumn(cols, names[1]))
+    x2 = collect(Float64, Tables.getcolumn(cols, names[2]))
+    shift = fitresult.shift
+    return (; y1=x1 .+ shift, y2=x2 .- shift)
+end
+
+function MMI.fit(model::DummyTableRegressor, verbosity::Int, X, y)
+    shift = isodd(model.rng) ? 1.0 : 2.0
+    fitresult = (shift=shift, seed_used=model.rng)
+    cache = nothing
+    report = (seed_used=model.rng,)
+    return fitresult, cache, report
+end
+
+function MMI.predict(model::DummyTableRegressor, fitresult, X)
+    return _dummy_table_predictions(fitresult, X)
+end
+
+function MMI.fit(model::ReportingTableRegressor, verbosity::Int, X, y)
+    shift = isodd(model.rng) ? 1.0 : 2.0
+    fitresult = (shift=shift, seed_used=model.rng)
+    cache = nothing
+    report = (seed_used=model.rng,)
+    return fitresult, cache, report
+end
+
+function MMI.predict(model::ReportingTableRegressor, fitresult, X)
+    predictions = _dummy_table_predictions(fitresult, X)
+    predict_report = (seed_used=fitresult.seed_used, n_predictions=MMI.nrows(X))
+    return predictions, predict_report
+end
+
+function _manual_vote(vectors::Vector{<:AbstractVector})
+    n = length(vectors[1])
+    out = similar(vectors[1])
+    @inbounds for i in 1:n
+        counts = Dict{Any,Int}()
+        order = Any[]
+        for values in vectors
+            value = values[i]
+            if !haskey(counts, value)
+                push!(order, value)
+            end
+            counts[value] = get(counts, value, 0) + 1
+        end
+        best = order[1]
+        best_count = counts[best]
+        for value in order[2:end]
+            count = counts[value]
+            if count > best_count
+                best = value
+                best_count = count
+            end
+        end
+        out[i] = best
+    end
+    return out
+end
+
+function _manual_aggregate_tables(predictions::Vector, aggregation::Symbol)
+    first_cols = Tables.columns(predictions[1])
+    names = Tuple(Tables.columnnames(first_cols))
+    aggregated = Vector{Any}(undef, length(names))
+
+    for (j, name) in enumerate(names)
+        vectors = [Tables.getcolumn(Tables.columns(pred), name) for pred in predictions]
+        aggregated[j] =
+            if aggregation == :mean
+                mean(vectors)
+            elseif aggregation == :median
+                [
+                    Statistics.median([vectors[k][i] for k in eachindex(vectors)]) for
+                    i in eachindex(vectors[1])
+                ]
+            elseif aggregation in (:mode, :vote)
+                _manual_vote(vectors)
+            else
+                error("Unsupported test aggregation: $aggregation")
+            end
+    end
+
+    return NamedTuple{names}(Tuple(aggregated))
+end
+
+function _inner_predictions(wrapper, fitresult, X)
+    reformatted = MMI.reformat(wrapper.model, X)
+    return [
+        MMI.predict(wrapper.model, fitresult.inner_fitresult[i], reformatted...) for
+        i in eachindex(fitresult.inner_fitresult)
+    ]
+end
 
 @testset "Best model refit reproducibility" begin
     # Load data
@@ -1037,6 +1150,36 @@ end
         @test eltype(yhat) <: Real
     end
 
+    @testset "predict return_mode=:aggregate (table-valued deterministic predictions)" begin
+        X_table = (x1=collect(range(0.0, 1.0; length=6)), x2=collect(range(2.0, 3.0; length=6)))
+        y_table = (y1=fill(0.0, 6), y2=fill(1.0, 6))
+
+        for aggregation in (:mean, :median, :mode, :vote)
+            repeated = RepeatedModel(
+                DummyTableRegressor(rng=42);
+                n_repeats=3,
+                return_mode=:aggregate,
+                aggregation=aggregation,
+                resampling=Holdout(rng=42),
+                measure=MultitargetLPLoss(),
+                random_state=101,
+            )
+            mach = machine(repeated, X_table, y_table)
+            fit!(mach, verbosity=0)
+
+            yhat = MLJBase.predict(mach, X_table)
+            @test Tables.istable(yhat)
+            @test Tuple(Tables.columnnames(Tables.columns(yhat))) == (:y1, :y2)
+
+            raw_predictions = _inner_predictions(repeated, mach.fitresult, X_table)
+            expected = _manual_aggregate_tables(raw_predictions, aggregation)
+            yhat_cols = Tables.columns(yhat)
+
+            @test Tables.getcolumn(yhat_cols, :y1) == expected.y1
+            @test Tables.getcolumn(yhat_cols, :y2) == expected.y2
+        end
+    end
+
     @testset "predict reproducibility" begin
         base_model = DecisionTreeClassifier(rng=42)
 
@@ -1325,6 +1468,47 @@ end
 # ==============================================================================
 # Reporting Predict Tests
 # ==============================================================================
+
+@testset "Reporting table predict tests" begin
+    X_table = (x1=collect(range(0.0, 1.0; length=6)), x2=collect(range(2.0, 3.0; length=6)))
+    y_table = (y1=fill(0.0, 6), y2=fill(1.0, 6))
+    n_repeats = 3
+
+    repeated = RepeatedModel(
+        ReportingTableRegressor(rng=42);
+        n_repeats=n_repeats,
+        return_mode=:aggregate,
+        aggregation=:mean,
+        resampling=Holdout(rng=42),
+        measure=MultitargetLPLoss(),
+        random_state=101,
+    )
+    mach = machine(repeated, X_table, y_table)
+    fit!(mach, verbosity=0)
+
+    yhat = MLJBase.predict(mach, X_table)
+    @test Tables.istable(yhat)
+    @test Tuple(Tables.columnnames(Tables.columns(yhat))) == (:y1, :y2)
+
+    rep = report(mach)
+    @test haskey(rep, :predict_reports)
+    @test haskey(rep, :aggregation)
+    @test rep.aggregation == :mean
+    @test length(rep.predict_reports) == n_repeats
+    for predict_report in rep.predict_reports
+        @test haskey(predict_report, :seed_used)
+        @test haskey(predict_report, :n_predictions)
+        @test predict_report.n_predictions == length(X_table.x1)
+    end
+
+    low_level = MMI.predict(repeated, mach.fitresult, X_table)
+    @test low_level isa Tuple
+    preds, wrapper_report = low_level
+    @test Tables.istable(preds)
+    @test haskey(wrapper_report, :predict_reports)
+    @test haskey(wrapper_report, :aggregation)
+    @test wrapper_report.aggregation == :mean
+end
 
 # A dummy probabilistic classifier that reports on predict
 mutable struct ReportingClassifier <: MMI.Probabilistic

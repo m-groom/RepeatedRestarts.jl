@@ -308,19 +308,10 @@ end
 function aggregate_predictions(
     preds_vecs::Vector, aggregation::Symbol, ::DeterministicRepeatedModel
 )
-    if aggregation == :mean
-        return mean(preds_vecs)
-    elseif aggregation == :median
-        n = length(preds_vecs[1])
-        return [
-            Statistics.median([preds_vecs[j][i] for j in eachindex(preds_vecs)]) for
-            i in 1:n
-        ]
-    elseif aggregation in (:mode, :vote)
-        out = similar(preds_vecs[1])
-        return vote_majority!(out, preds_vecs)
+    if Tables.istable(preds_vecs[1])
+        return aggregate_table_predictions(preds_vecs, aggregation)
     else
-        error("Unsupported aggregation method: $aggregation")
+        return aggregate_prediction_vector(preds_vecs, aggregation)
     end
 end
 
@@ -621,7 +612,8 @@ Train the machine with `fit!(mach, rows=...)`.
 
 - `aggregation::Symbol = :mean`: Aggregation method when
   `return_mode = :aggregate`. One of `:mean`, `:median` (deterministic
-  only), `:mode`, or `:vote`.
+  only), `:mode`, or `:vote`. For deterministic table-valued predictions,
+  aggregation is applied column-wise.
 
 - `refit::Bool = true`: Whether to refit the selected model(s) on the
   full training data after selection.  Automatically set to `false` when
@@ -656,6 +648,7 @@ Train the machine with `fit!(mach, rows=...)`.
   - `:best` — a single prediction vector from the best repeat.
   - `:all`  — a vector of prediction vectors, one per repeat.
   - `:aggregate` — a single prediction vector aggregated across repeats.
+    Deterministic table-valued predictions are aggregated column-wise.
 
   If the wrapped model reports on `:predict` (i.e., `:predict in reporting_operations(model)`),
   the wrapper correctly unpacks the inner `(prediction, report)` tuples, aggregates only

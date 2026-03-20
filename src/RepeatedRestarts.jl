@@ -7,6 +7,7 @@ using MLJTuning
 using MLJBase
 using ComputationalResources
 using Distributed
+using Tables
 
 const MMI = MLJModelInterface
 

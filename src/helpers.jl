@@ -205,6 +205,109 @@ function vote_majority!(out, preds_vecs::Vector{<:AbstractVector})
     return out
 end
 
+# Aggregate deterministic vector predictions.
+function aggregate_prediction_vector(
+    preds_vecs::Vector{<:AbstractVector}, aggregation::Symbol
+)
+    n = length(preds_vecs[1])
+    for preds in preds_vecs
+        length(preds) == n ||
+            error("Cannot aggregate predictions with mismatched lengths.")
+    end
+
+    if aggregation == :mean
+        return mean(preds_vecs)
+    elseif aggregation == :median
+        return [
+            Statistics.median([preds_vecs[j][i] for j in eachindex(preds_vecs)]) for
+            i in 1:n
+        ]
+    elseif aggregation in (:mode, :vote)
+        out = similar(preds_vecs[1])
+        return vote_majority!(out, preds_vecs)
+    else
+        error("Unsupported aggregation method: $aggregation")
+    end
+end
+
+function _table_aggregation_error(message)
+    error("Cannot aggregate deterministic table predictions: $message")
+end
+
+function _materialise_aggregated_table(first_pred, names::Tuple, values::Vector)
+    columntable = NamedTuple{names}(Tuple(values))
+    materializer = Tables.materializer(first_pred)
+    try
+        materialised = materializer(columntable)
+        if Tables.istable(materialised) &&
+            Tuple(Tables.columnnames(Tables.columns(materialised))) == names
+            return materialised
+        end
+    catch
+        nothing
+    end
+    return columntable
+end
+
+function aggregate_table_predictions(preds_tables::Vector, aggregation::Symbol)
+    first_pred = preds_tables[1]
+    Tables.istable(first_pred) ||
+        _table_aggregation_error("received a non-table prediction as the reference output.")
+
+    first_cols = Tables.columns(first_pred)
+    names = Tuple(Tables.columnnames(first_cols))
+    isempty(names) && _table_aggregation_error("received a prediction table with no columns.")
+
+    reference_columns = [Tables.getcolumn(first_cols, name) for name in names]
+    n = length(reference_columns[1])
+    for col in reference_columns
+        length(col) == n ||
+            _table_aggregation_error(
+                "the reference prediction has inconsistent column lengths.",
+            )
+    end
+
+    all_columns = Vector{Any}(undef, length(preds_tables))
+    all_columns[1] = reference_columns
+
+    for i in 2:length(preds_tables)
+        pred = preds_tables[i]
+        Tables.istable(pred) ||
+            _table_aggregation_error(
+                "repeat $i returned a non-table prediction while other repeats returned tables.",
+            )
+        cols = Tables.columns(pred)
+        Tuple(Tables.columnnames(cols)) == names ||
+            _table_aggregation_error("repeat $i returned different column names or order.")
+        current_columns = [Tables.getcolumn(cols, name) for name in names]
+        for col in current_columns
+            length(col) == n ||
+                _table_aggregation_error(
+                    "repeat $i returned a different number of rows from the reference prediction.",
+                )
+        end
+        all_columns[i] = current_columns
+    end
+
+    aggregated_values = Vector{Any}(undef, length(names))
+    for (j, name) in enumerate(names)
+        column_predictions = [cols[j] for cols in all_columns]
+        try
+            aggregated_values[j] = aggregate_prediction_vector(column_predictions, aggregation)
+        catch err
+            if aggregation in (:mean, :median)
+                error(
+                    "Failed to aggregate table column `$(name)` with aggregation=$(aggregation). " *
+                    "Column values do not support this operation.",
+                )
+            end
+            rethrow(err)
+        end
+    end
+
+    return _materialise_aggregated_table(first_pred, names, aggregated_values)
+end
+
 # Averaging of UnivariateFinite vectors
 function aggregate_probs(
     yhat_vecs::Vector{<:MLJBase.CategoricalDistributions.UnivariateFiniteVector}
