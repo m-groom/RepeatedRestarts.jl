@@ -1,7 +1,7 @@
 name = "RepeatedRestarts"
 uuid = "c5ef7d8a-4f32-44df-9bf1-d1a5ca83e999"
-version = "0.1.0"
 authors = ["Michael <michael.groom@sydney.edu.au>"]
+version = "0.1.0"
 
 [deps]
 ComputationalResources = "ed09eef8-17a6-5b46-8889-db040fac31e3"
@@ -22,7 +22,7 @@ MLJDecisionTreeInterface = "0.4"
 MLJModelInterface = "1.11"
 MLJTuning = "0.8"
 Random = "1.9, 1.10, 1.11"
-StatisticalMeasures = "0.1.7"
+StatisticalMeasures = "0.1.7, 0.3"
 Statistics = "1.9, 1.10, 1.11"
 Tables = "1"
 Test = "1.9, 1.10, 1.11"
